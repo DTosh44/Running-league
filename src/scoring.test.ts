@@ -51,3 +51,19 @@ describe('RunningScore v1.0', () => {
     expect(scoreBand(25)).toBe('Peak performance')
   })
 })
+
+describe('weekly league selection', () => {
+  it('uses the UK week, excludes future and training runs, and counts one run per day', async () => {
+    const { weeklyScoringRuns } = await import('./scoring')
+    const run = (id: string, occurredAt: string, points: number, training = false) => ({ id, occurredAt, score: { points }, training })
+    const chosen = weeklyScoringRuns([
+      run('old', '2026-09-13T22:59:00Z', 25),
+      run('monday', '2026-09-13T23:01:00Z', 20),
+      run('same-day', '2026-09-14T08:00:00Z', 22),
+      run('tuesday', '2026-09-15T08:00:00Z', 18),
+      run('training', '2026-09-16T08:00:00Z', 25, true),
+      run('future', '2026-09-21T08:00:00Z', 25),
+    ], 3, new Date('2026-09-20T12:00:00Z'))
+    expect(chosen.map((run) => run.id)).toEqual(['same-day', 'tuesday'])
+  })
+})

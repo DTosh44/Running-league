@@ -4,8 +4,11 @@ export type ActivityRecord = RunScoreInput & {
   id: string
   name: string
   date: string
+  occurredAt?: string
   location: string
-  source: 'Garmin' | 'FIT upload' | 'Manual'
+  source: 'Garmin' | 'Strava' | 'FIT upload' | 'GPX upload' | 'Manual'
+  training?: boolean
+  providerExternalId?: string
   score: RunScore
 }
 
@@ -62,4 +65,31 @@ export type TrainingPlan = {
   weeks: TrainingWeek[]
   targetPace: string
   summary: string
+}
+
+export type League = {
+  id: string
+  name: string
+  code: string
+  description: string
+  seasonWeeks: number
+  runsPerWeek: number
+  memberCount: number
+  role: 'owner' | 'member'
+  createdAt: string
+}
+
+export type LeagueTableEntry = {
+  userId: string
+  name: string
+  initials: string
+  weeklyPoints: number
+  seasonPoints: number
+  runs: number
+}
+
+export type UserPreferences = {
+  weeklyEmail: boolean
+  leagueNotifications: boolean
+  publicProfile: boolean
 }

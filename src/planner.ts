@@ -31,11 +31,10 @@ export const defaultPlanAnswers = (): PlanAnswers => {
 }
 
 export function parseDuration(value: string) {
+  if (!/^\d{1,3}:\d{2}(:\d{2})?$/.test(value)) return 0
   const parts = value.split(':').map(Number)
-  if (parts.some(Number.isNaN)) return 0
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2]
-  if (parts.length === 2) return parts[0] * 60 + parts[1]
-  return parts[0] || 0
+  if (parts.slice(1).some((part) => part >= 60) || parts.some((part) => !Number.isFinite(part) || part < 0)) return 0
+  return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1]
 }
 
 const paceWindow = (centreSeconds: number, lower: number, upper: number) =>
@@ -99,22 +98,24 @@ function makeSession(
 export function generateTrainingPlan(answers: PlanAnswers, now = new Date()): TrainingPlan {
   const raceDate = new Date(`${answers.raceDate}T12:00:00`)
   const rawWeeks = Math.ceil((raceDate.getTime() - now.getTime()) / (7 * 24 * 60 * 60 * 1000))
-  const weekCount = Math.max(4, Math.min(24, rawWeeks))
+  if (!Number.isFinite(rawWeeks) || rawWeeks < 4 || rawWeeks > 24) throw new Error('Choose a race between 4 and 24 weeks away for this plan builder.')
+  if (!Number.isInteger(answers.runsPerWeek) || answers.runsPerWeek < 2 || answers.runsPerWeek > 6) throw new Error('Choose between 2 and 6 running days.')
+  if (answers.preferredDays.length < answers.runsPerWeek || !answers.preferredDays.includes(answers.longRunDay)) throw new Error('Select enough running days and include your long-run day.')
+  if (![answers.weeklyDistanceKm, answers.longestRunKm].every((n) => Number.isFinite(n) && n > 0) || answers.longestRunKm > answers.weeklyDistanceKm) throw new Error('Enter your current weekly distance and a longest run no greater than that weekly distance.')
+  const weekCount = rawWeeks
   const distance = raceDistanceKm[answers.raceDistance]
   const targetSeconds = parseDuration(answers.targetTime)
-  const targetPaceSeconds = targetSeconds > 0 ? targetSeconds / distance : parseDuration(answers.recentFiveK) / 5
+  const recentSeconds = parseDuration(answers.recentFiveK)
+  if (!targetSeconds || !recentSeconds) throw new Error('Enter valid target and recent 5K times.')
+  const targetPaceSeconds = targetSeconds / distance
+  const trainingPaceSeconds = Math.max(targetPaceSeconds, recentSeconds * Math.pow(distance / 5, 1.06) / distance)
   const days = orderedDays(answers)
-  const activeDays = days.length >= answers.runsPerWeek
-    ? days.slice(0, answers.runsPerWeek)
-    : weekdays.filter((day) => day !== 'Friday').slice(0, answers.runsPerWeek)
-  if (activeDays.includes(answers.longRunDay)) {
-    activeDays.splice(activeDays.indexOf(answers.longRunDay), 1)
-    activeDays.push(answers.longRunDay)
-  }
+  const activeDays = days.filter((day) => day !== answers.longRunDay).slice(0, answers.runsPerWeek - 1)
+  activeDays.push(answers.longRunDay)
 
   const mix = sessionMix(answers.runsPerWeek)
   const peakMultiplier = answers.raceDistance === 'Marathon' ? 1.75 : answers.raceDistance === 'Half marathon' ? 1.45 : 1.25
-  const peakWeeklyKm = Math.max(answers.weeklyDistanceKm, distance * peakMultiplier)
+  const peakWeeklyKm = Math.min(Math.max(answers.weeklyDistanceKm, distance * peakMultiplier), answers.weeklyDistanceKm * Math.pow(1.06, Math.max(0, weekCount - 3)))
   const weeks: TrainingWeek[] = []
 
   for (let index = 0; index < weekCount; index += 1) {
@@ -125,16 +126,19 @@ export function generateTrainingPlan(answers: PlanAnswers, now = new Date()): Tr
     const baseKm = answers.weeklyDistanceKm + (peakWeeklyKm - answers.weeklyDistanceKm) * buildProgress
     const cutback = !isTaper && weekNumber % 4 === 0 ? 0.82 : 1
     const taper = isTaper ? (remaining === 1 ? 0.72 : 0.48) : 1
-    const totalKm = Math.max(answers.runsPerWeek * 3, Math.round(baseKm * cutback * taper))
+    const totalKm = Math.max(answers.runsPerWeek * 2, Math.round(baseKm * cutback * taper))
     const longShare = answers.runsPerWeek <= 3 ? 0.42 : 0.36
-    const longDistance = Math.min(distance * 0.9, Math.max(answers.longestRunKm, totalKm * longShare))
+    const longDistance = Math.min(totalKm - (answers.runsPerWeek - 1) * 2, distance * 0.9, Math.max(2, answers.longestRunKm * Math.pow(1.05, index) * cutback * taper), totalKm * longShare)
     const otherTotal = Math.max(totalKm - longDistance, (answers.runsPerWeek - 1) * 2)
     const otherDistance = otherTotal / Math.max(1, answers.runsPerWeek - 1)
 
     const sessions = mix.slice(0, answers.runsPerWeek).map((type, sessionIndex) =>
-      makeSession(type, activeDays[sessionIndex] ?? weekdays[sessionIndex], type === 'Long run' ? longDistance : otherDistance, targetPaceSeconds, weekNumber),
+      makeSession(answers.experience === 'New runner' && (type === 'Intervals' || type === 'Tempo') ? 'Easy' : type, activeDays[sessionIndex] ?? weekdays[sessionIndex], type === 'Long run' ? longDistance : otherDistance, trainingPaceSeconds, weekNumber),
     )
 
+    for (const session of sessions) {
+      session.detail += answers.terrain === 'Road' ? '' : ' On trails and hills, use the described effort rather than chasing pace.'
+    }
     if (answers.strengthTraining && weekNumber % 2 === 1) {
       sessions.push({
         day: activeDays[0] === 'Monday' ? 'Wednesday' : 'Monday',
@@ -148,14 +152,14 @@ export function generateTrainingPlan(answers: PlanAnswers, now = new Date()): Tr
       week: weekNumber,
       label: `Week ${weekNumber}`,
       focus: isTaper ? 'Freshen up' : weekNumber % 4 === 0 ? 'Absorb the work' : index < weekCount / 2 ? 'Build consistency' : 'Race-specific fitness',
-      totalKm,
+      totalKm: Math.round(sessions.reduce((sum, session) => sum + (session.distanceKm ?? 0), 0) * 10) / 10,
       sessions,
       isTaper,
     })
   }
 
   return {
-    createdAt: new Date().toISOString(),
+    createdAt: now.toISOString(),
     answers,
     weeks,
     targetPace: formatPace(targetPaceSeconds),

@@ -22,10 +22,26 @@ describe('training plan generator', () => {
     expect(plan.weeks.at(-1)?.isTaper).toBe(true)
   })
 
-  it('caps unusually long plans at 24 weeks', () => {
+  it('rejects dates outside the supported plan range', () => {
     const answers = defaultPlanAnswers()
     answers.raceDate = '2027-12-20'
-    const plan = generateTrainingPlan(answers, new Date('2026-09-20T12:00:00'))
-    expect(plan.weeks).toHaveLength(24)
+    expect(() => generateTrainingPlan(answers, new Date('2026-09-20T12:00:00'))).toThrow(/4 and 24/)
+    answers.raceDate = '2026-09-22'
+    expect(() => generateTrainingPlan(answers, new Date('2026-09-20T12:00:00'))).toThrow(/4 and 24/)
+  })
+})
+
+describe('plan constraints', () => {
+  it('keeps the chosen long-run day when extra available days were selected', () => {
+    const answers = { ...defaultPlanAnswers(), preferredDays: ['Monday', 'Tuesday', 'Thursday', 'Sunday'] }
+    const plan = generateTrainingPlan(answers)
+    expect(plan.weeks[0].sessions.find((session) => session.type === 'Long run')?.day).toBe('Sunday')
+    for (const week of plan.weeks) expect(week.totalKm).toBeCloseTo(week.sessions.reduce((sum, session) => sum + (session.distanceKm ?? 0), 0), 1)
+  })
+  it('rejects unavailable long-run days and malformed durations', () => {
+    const answers = { ...defaultPlanAnswers(), longRunDay: 'Monday' }
+    expect(() => generateTrainingPlan(answers)).toThrow(/long-run day/)
+    expect(parseDuration('00:99:00')).toBe(0)
+    expect(parseDuration('-1:20')).toBe(0)
   })
 })

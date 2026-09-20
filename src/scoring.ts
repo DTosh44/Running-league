@@ -57,8 +57,8 @@ export function scoreBand(points: number): ScoreBand {
 
 export function formatPace(secondsPerKm: number) {
   if (!Number.isFinite(secondsPerKm) || secondsPerKm <= 0) return '—'
-  const minutes = Math.floor(secondsPerKm / 60)
-  const seconds = Math.round(secondsPerKm % 60).toString().padStart(2, '0')
+  const minutes = Math.floor(Math.round(secondsPerKm) / 60)
+  const seconds = (Math.round(secondsPerKm) % 60).toString().padStart(2, '0')
   return `${minutes}:${seconds}/km`
 }
 
@@ -111,3 +111,21 @@ export const leagueRules = {
   seasonWeeks: 10,
   countedWeeks: 8,
 } as const
+
+// Match the database's Monday-to-Sunday league week in UK local time.
+export function weeklyScoringRuns<T extends { occurredAt?: string; training?: boolean; score: { points: number } }>(activities: T[], limit = 3, now = new Date()): T[] {
+  const ukDate = (value: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+  const today = new Date(`${ukDate(now)}T12:00:00Z`)
+  today.setUTCDate(today.getUTCDate() - (today.getUTCDay() + 6) % 7)
+  const start = today.toISOString().slice(0, 10)
+  const byDay = new Map<string, T>()
+  for (const activity of activities) {
+    if (activity.training || !activity.occurredAt) continue
+    const occurred = new Date(activity.occurredAt)
+    if (!Number.isFinite(occurred.getTime()) || occurred > now) continue
+    const day = ukDate(occurred)
+    if (day < start) continue
+    if (!byDay.has(day) || byDay.get(day)!.score.points < activity.score.points) byDay.set(day, activity)
+  }
+  return [...byDay.values()].sort((a, b) => b.score.points - a.score.points).slice(0, limit)
+}
