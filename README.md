@@ -2,6 +2,16 @@
 
 A responsive free-beta running product for fair private leagues, transparent activity scoring and personalised race plans.
 
+## Product vision, look and next priorities
+
+**What it should become:** an approachable, trustworthy place for friends and running groups to run **private leagues** that reward running performances through understandable rules, with personalised race plans alongside the competition. Users should be able to create or join a league, enter/import their own runs, see fair weekly/season standings and use structured plans without relying on direct wearable integrations.
+
+**Implemented visual direction:** performance-led but not intimidating. Navy `#0d1735` and rich blue `#1646d8` anchor a light `#f6f8ff` interface, with restrained violet `#6b4eff` and lavender `#a997ff` accents; Inter typography, bold concise headings, clean cards and responsive mobile layouts. The current UI rules live in `src/styles.css`. Avoid visual complexity that obscures scoring, eligibility or the next action.
+
+**Immediate direction:** prove real signup, email confirmation, login and recovery in the deployed beta with a configured SMTP sender and two independent accounts, then validate league invites and scoring permissions across those accounts. GPX/FIT import and manual entries remain valid even without Strava/Garmin APIs. Strava must not be advertised as active until credentials and full OAuth import are verified; Garmin direct integration needs partner approval. Keep RunningScore v1.0 stable unless a scoring rule change is expressly agreed. See [PROJECT.md](PROJECT.md) and [AGENTS.md](AGENTS.md).
+
+**Later:** improve usability and integrate authorised providers only when the core private-league experience is reliable. Do not pivot into an open social network or radically change scoring during beta onboarding.
+
 ## Deployment status — 20 September 2026
 
 Production: https://running-league-alpha.vercel.app/
