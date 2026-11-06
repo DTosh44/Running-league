@@ -12,6 +12,16 @@ A responsive free-beta running product for fair private leagues, transparent act
 
 **Later:** improve usability and integrate authorised providers only when the core private-league experience is reliable. Do not pivot into an open social network or radically change scoring during beta onboarding.
 
+## Run Plans (feature branch, not live)
+
+The optional **Run Plans** screen is being built on `feature/run-plans`. Within a private league, members can add planned runs, switch between day/week/month calendars (week first), see who is attending, RSVP, and share an authenticated link through WhatsApp. New runs can be repeated weekly for four or eight weeks; each entry can then be edited or cancelled separately. Scheduling does not affect league scoring, activity history or race training plans.
+
+For an **existing** Supabase project, apply [`supabase/migrations/20261106_run_plans.sql`](supabase/migrations/20261106_run_plans.sql) once in the SQL Editor **before** deploying the feature branch. It adds `run_plans` and `run_plan_attendees` tables with membership-based row-level security, host attendance and a private calendar RPC. It does not reset data or require schema recreation. Use [`supabase/tests/run-plans-security.sql`](supabase/tests/run-plans-security.sql) to test group permissions in a rolled-back transaction. For a fresh installation, run `supabase/schema.sql` before the new Run Plans migration.
+
+Without cloud configuration, Run Plans is available for UI testing with the demo account, but saved plans are browser-local, not shared between users. Reminders, automatic WhatsApp notifications, unlimited recurrence and separate non-competitive groups are not part of this first version.
+
+**Review checklist:** `npm run lint`, `npm test`, `npm run build`; apply and run the SQL security test on a non-production database; verify with two different real accounts that non-members cannot see runs or meeting points, and that joining/leaving works. The Run Plans migration has not been applied automatically to production.
+
 ## Deployment status — 20 September 2026
 
 Production: https://running-league-alpha.vercel.app/
