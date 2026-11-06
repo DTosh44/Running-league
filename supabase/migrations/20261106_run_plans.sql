@@ -118,6 +118,7 @@ create policy "Members leave planned runs"
       join public.league_members membership on membership.league_id = plan.league_id
       where plan.id = run_plan_attendees.plan_id
         and membership.user_id = (select auth.uid())
+        and plan.created_by <> (select auth.uid())
     )
   );
 
@@ -158,24 +159,10 @@ create trigger auto_join_run_plan_host
   after insert on public.run_plans for each row
   execute function public.auto_join_run_plan_host();
 
-create or replace function public.keep_run_plan_host_attending()
-returns trigger
-language plpgsql set search_path = public as $$
-begin
-  if exists (
-    select 1 from public.run_plans plan
-    where plan.id = old.plan_id and plan.created_by = old.user_id
-  ) then
-    raise exception 'The organiser cannot leave their own run. Cancel the run instead.';
-  end if;
-  return old;
-end;
-$$;
-
+-- Do not use a DELETE trigger on attendance: an organiser can delete the parent
+-- run and PostgreSQL must be free to cascade its attendance rows.
 drop trigger if exists keep_run_plan_host_attending on public.run_plan_attendees;
-create trigger keep_run_plan_host_attending
-  before delete on public.run_plan_attendees for each row
-  execute function public.keep_run_plan_host_attending();
+drop function if exists public.keep_run_plan_host_attending();
 
 -- Profiles remain private under their existing RLS policies. This function
 -- reveals only the names of hosts and attendees within a league the caller
@@ -242,5 +229,5 @@ revoke all on public.run_plans, public.run_plan_attendees from anon;
 grant select, insert, update, delete on public.run_plans, public.run_plan_attendees to authenticated;
 revoke execute on function public.list_run_plans(uuid,timestamptz,timestamptz) from public, anon;
 grant execute on function public.list_run_plans(uuid,timestamptz,timestamptz) to authenticated;
-revoke execute on function public.keep_run_plan_identity(), public.auto_join_run_plan_host(),
-  public.keep_run_plan_host_attending() from public, anon, authenticated;
+revoke execute on function public.keep_run_plan_identity(), public.auto_join_run_plan_host()
+  from public, anon, authenticated;
