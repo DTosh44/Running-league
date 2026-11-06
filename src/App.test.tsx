@@ -76,6 +76,22 @@ describe('RunningLeague product', () => {
     expect(await screen.findByText('Saturday Crew')).toBeInTheDocument()
   })
 
+  it('lets a demo league member schedule a private run', async () => {
+    renderApp('/login')
+    await logInDemo()
+
+    fireEvent.click(screen.getByRole('link', { name: /Run Plans/i }))
+    expect(await screen.findByRole('heading', { name: 'Run Plans', level: 2 })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Plan a run' }))
+    fireEvent.change(screen.getByLabelText('Run name'), { target: { value: 'Club easy 8K' } })
+    fireEvent.change(screen.getByLabelText('Where are you meeting?'), { target: { value: 'The park entrance' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add to group calendar' }))
+
+    expect(await screen.findByText('Club easy 8K')).toBeInTheDocument()
+    expect(screen.getByText('The park entrance')).toBeInTheDocument()
+    expect(screen.getByText(/1 runner/)).toBeInTheDocument()
+  })
+
   it('marks a training session complete', async () => {
     renderApp('/login')
     await logInDemo()
