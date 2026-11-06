@@ -50,9 +50,10 @@ function editForm(plan: PlannedRun): RunFormValues {
   }
 }
 
-function RunCard({ plan, userId, busy, onJoin, onEdit, onCancel }: {
+function RunCard({ plan, userId, now, busy, onJoin, onEdit, onCancel }: {
   plan: PlannedRun
   userId: string
+  now: number
   busy: boolean
   onJoin: (plan: PlannedRun, joining: boolean) => void
   onEdit: (plan: PlannedRun) => void
@@ -60,7 +61,7 @@ function RunCard({ plan, userId, busy, onJoin, onEdit, onCancel }: {
 }) {
   const owner = plan.createdBy === userId
   const joined = plan.attendees.some((person) => person.userId === userId)
-  const upcoming = new Date(plan.startsAt).getTime() > Date.now()
+  const upcoming = new Date(plan.startsAt).getTime() > now
   const shareUrl = shareRunUrl(plan, window.location.origin)
   const shareText = 'I have a run planned in our RunningLeague group on ' +
     longDateFormat.format(new Date(plan.startsAt)) + ' at ' + timeFormat.format(new Date(plan.startsAt)) +
@@ -141,6 +142,7 @@ export default function RunPlansPage() {
   const [view, setView] = useState<RunPlansView>(() => parameters.has('run') ? 'day' : 'week')
   const [anchor, setAnchor] = useState<Date>(initialDate)
   const [plans, setPlans] = useState<PlannedRun[]>([])
+  const [now] = useState(() => Date.now())
   const requestVersion = useRef(0)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -180,7 +182,10 @@ export default function RunPlansPage() {
     }
   }, [user, selectedLeague, range])
 
-  useEffect(() => { void reload() }, [reload])
+  useEffect(() => {
+    const task = window.setTimeout(() => void reload(), 0)
+    return () => window.clearTimeout(task)
+  }, [reload])
 
   const openAdd = (date = new Date()) => {
     setEditing(null)
@@ -235,7 +240,7 @@ export default function RunPlansPage() {
     catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not cancel the run.') }
     finally { setBusy(false) }
   }
-  const card = (plan: PlannedRun) => <RunCard key={plan.id} plan={plan} userId={user?.id ?? ''} busy={busy} onJoin={handleJoin} onEdit={openEdit} onCancel={handleCancel} />
+  const card = (plan: PlannedRun) => <RunCard key={plan.id} plan={plan} userId={user?.id ?? ''} now={now} busy={busy} onJoin={handleJoin} onEdit={openEdit} onCancel={handleCancel} />
   const headerLabel = view === 'month'
     ? new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(anchor)
     : view === 'week' ? dateFormat.format(range.start) + ' – ' + dateFormat.format(new Date(range.end.getTime() - 1)) + ' ' + range.start.getFullYear()
@@ -280,7 +285,7 @@ export default function RunPlansPage() {
               const runs = grouped[dateKey(day)] ?? []
               const outside = day.getMonth() !== anchor.getMonth()
               return <button type="button" key={dateKey(day)}
-                className={'run-plans-month-day' + (outside ? ' outside' : '') + (dateKey(day) === dateKey(new Date()) ? ' today' : '')}
+                className={'run-plans-month-day' + (outside ? ' outside' : '') + (dateKey(day) === dateKey(new Date(now)) ? ' today' : '')}
                 aria-label={longDateFormat.format(day) + ', ' + runs.length + ' planned runs'}
                 onClick={() => { setAnchor(day); setView('day') }}>
                 <span>{day.getDate()}</span>
@@ -298,7 +303,7 @@ export default function RunPlansPage() {
                 ? runs.map((plan) => <div className={plan.id === highlightId ? 'run-plans-highlight' : ''} key={plan.id}>{card(plan)}</div>)
                 : <p className="run-plans-no-runs">Nothing planned yet.</p>}
               </div>
-              {day.getTime() + 86400000 > Date.now() && <button type="button" className="run-plans-day-add" onClick={() => openAdd(day)}><Plus size={14} /> Add a run</button>}
+              {day.getTime() + 86400000 > now && <button type="button" className="run-plans-day-add" onClick={() => openAdd(day)}><Plus size={14} /> Add a run</button>}
             </section>
           })}</div>}
       {plans.length === 0 && !loading && !error && <p className="run-plans-footnote"><CalendarDays size={16} /> No runs scheduled in this view yet. Add one to get everyone moving.</p>}
