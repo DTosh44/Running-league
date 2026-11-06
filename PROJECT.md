@@ -1,6 +1,6 @@
 # Running League — project status
 
-Last reviewed: 1 October 2026
+Last reviewed: 6 November 2026
 
 ## Purpose
 
@@ -56,6 +56,14 @@ The deployed environment is not yet ready for broad public signup.
 3. Test password recovery.
 4. Verify league invite/join and score isolation with those accounts.
 5. Decide whether Strava setup is required for this beta milestone or can remain deferred.
+
+## Run Plans feature branch (not deployed)
+
+An explicit new product request is being developed separately on `feature/run-plans` without changing league scoring. Private league members can post planned runs, view day/week/month calendars (week by default), invite others through an authenticated deep link, join/leave runs, and create weekly repeats covering four or eight weeks. Hosts can change or cancel individual occurrences. Planned runs are not completed activities and **do not change RunningScore, league points or training plans**.
+
+**Deployment requirement:** Apply `supabase/migrations/20261106_run_plans.sql` to the existing Supabase project *before* deploying a build that exposes Run Plans. This is additive and does not reset production tables. Verify the migration with `supabase/tests/run-plans-security.sql`, then test group privacy and attendance with two real accounts. Demo-only mode stores its plans locally in the browser; it cannot coordinate across different devices.
+
+Not included in v1: automated reminders, live WhatsApp sending, an independent non-league group system, open/public discovery, and indefinite weekly recurrence. WhatsApp sharing opens the user's WhatsApp composer; it does not send messages automatically. No claim is made that the feature is live or end-to-end tested.
 
 ## Deferred / out of scope for this milestone
 
