@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, Clock3, Edit3, MapPin, Plus, RefreshCw, Route, Share2, Trash2, Users, X } from 'lucide-react'
 import { useAuth } from './auth'
 import { usePlatform } from './platform'
+import { supabase } from './supabase'
 import {
   calendarDays, createPlannedRuns, dateKey, deletePlannedRun, formatPace, listPlannedRuns,
   parsePace, setRunAttendance, shareRunUrl, shiftView, toLocalDateTime,
@@ -31,6 +32,7 @@ function initialDate(): Date {
 
 function defaultForm(date: Date): RunFormValues {
   const next = new Date(date)
+  if (next.getHours() === 0 && next.getMinutes() === 0 && next.getTime() > Date.now()) next.setHours(18, 0, 0, 0)
   if (next.getTime() <= Date.now()) next.setTime(Date.now() + 60 * 60 * 1000)
   next.setMinutes(Math.ceil(next.getMinutes() / 15) * 15, 0, 0)
   return { title: 'Easy run', dateTime: toLocalDateTime(next), meetingPoint: '', distance: '', pace: '', notes: '', repeatWeeks: 1 }
@@ -139,6 +141,7 @@ export default function RunPlansPage() {
   const [view, setView] = useState<RunPlansView>(() => parameters.has('run') ? 'day' : 'week')
   const [anchor, setAnchor] = useState<Date>(initialDate)
   const [plans, setPlans] = useState<PlannedRun[]>([])
+  const requestVersion = useRef(0)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -160,16 +163,21 @@ export default function RunPlansPage() {
   }, [plans])
 
   const reload = useCallback(async () => {
+    const version = ++requestVersion.current
     if (!user || !selectedLeague) { setPlans([]); setLoading(false); return }
     setLoading(true)
     setError('')
     try {
       const next = await listPlannedRuns(user, selectedLeague.id, range)
-      setPlans(next)
+      if (requestVersion.current === version) setPlans(next)
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Could not load planned runs.')
-      setPlans([])
-    } finally { setLoading(false) }
+      if (requestVersion.current === version) {
+        setError(caught instanceof Error ? caught.message : 'Could not load planned runs.')
+        setPlans([])
+      }
+    } finally {
+      if (requestVersion.current === version) setLoading(false)
+    }
   }, [user, selectedLeague, range])
 
   useEffect(() => { void reload() }, [reload])
@@ -207,7 +215,6 @@ export default function RunPlansPage() {
       setEditing(null)
       setNotice(editing ? 'Run updated.' : form.repeatWeeks > 1 ? 'Weekly runs added to the calendar.' : 'Run added to the calendar.')
       setAnchor(new Date(form.dateTime))
-      await reload()
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Could not save the run.') }
     finally { setBusy(false) }
   }
@@ -262,7 +269,7 @@ export default function RunPlansPage() {
           <button type="button" aria-label="Refresh Run Plans" onClick={() => void reload()}><RefreshCw size={16} /></button>
         </div>
       </section>
-      {!leaguesLoading && <p className="run-plans-private"><Users size={14} /> Only members of {selectedLeague?.name ?? 'your group'} can see these plans. Demo plans are saved only in this browser when cloud login is not configured.</p>}
+      {!leaguesLoading && <p className="run-plans-private"><Users size={14} /> Only members of {selectedLeague?.name ?? 'your group'} can see these plans. {!supabase && 'Demo mode: runs are saved only in this browser.'}</p>}
       {notice && <div className="notice success" role="status">{notice}</div>}
       {error && !showForm && <div className="notice error" role="alert">{error}</div>}
       {loading || leaguesLoading ? <section className="panel run-plans-loading">Loading your group calendar…</section>
