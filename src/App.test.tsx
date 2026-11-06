@@ -81,7 +81,7 @@ describe('RunningLeague product', () => {
     await logInDemo()
 
     fireEvent.click(screen.getByRole('link', { name: /Run Plans/i }))
-    expect(await screen.findByRole('heading', { name: 'Run Plans' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Run Plans', level: 2 })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Plan a run' }))
     fireEvent.change(screen.getByLabelText('Run name'), { target: { value: 'Club easy 8K' } })
     fireEvent.change(screen.getByLabelText('Where are you meeting?'), { target: { value: 'The park entrance' } })
