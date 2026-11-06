@@ -23,6 +23,15 @@ begin
 end
 $$;
 
+delete from public.run_plan_attendees
+where user_id = '33333333-3333-4333-8333-333333333333';
+do $
+begin
+  assert (select count(*) from public.run_plan_attendees) = 1,
+    'Host must not leave their own plan';
+end
+$;
+
 reset role;
 select set_config('running_league.runplans_league',
   (select id::text from public.leagues where name = 'Run Plans test' limit 1),true);
