@@ -88,3 +88,14 @@
   .run-plans-weekdays span { font-size: 10px; }
   .run-plan-actions .button { flex: 1; }
 }
+
+
+/* Invitation from a private league page. */
+.run-plans-league-prompt { padding: 21px 24px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+.run-plans-league-prompt h3 { margin: 6px 0; font-size: 18px; }
+.run-plans-league-prompt p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.run-plans-league-prompt .button { flex: 0 0 auto; }
+@media (max-width: 650px) {
+  .run-plans-league-prompt { flex-direction: column; align-items: stretch; padding: 18px; }
+  .run-plans-league-prompt .button { width: 100%; }
+}
