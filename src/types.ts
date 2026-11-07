@@ -6,7 +6,7 @@ export type ActivityRecord = RunScoreInput & {
   date: string
   occurredAt?: string
   location: string
-  source: 'Garmin' | 'Strava' | 'FIT upload' | 'GPX upload' | 'Manual'
+  source: 'Garmin' | 'Strava' | 'Strava screenshot' | 'FIT upload' | 'GPX upload' | 'Manual'
   training?: boolean
   providerExternalId?: string
   score: RunScore
