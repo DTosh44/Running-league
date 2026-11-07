@@ -162,6 +162,21 @@ as $$
   order by l.created_at desc;
 $$;
 
+-- Verified league rules cannot be silently disabled after creation.
+create or replace function public.prevent_verified_league_downgrade()
+returns trigger language plpgsql security definer set search_path = public as $
+begin
+  if old.require_verified_runs and not new.require_verified_runs then
+    raise exception 'A verified league cannot remove its evidence requirement.';
+  end if;
+  return new;
+end;
+$;
+drop trigger if exists prevent_verified_league_downgrade on public.leagues;
+create trigger prevent_verified_league_downgrade
+before update on public.leagues for each row
+execute function public.prevent_verified_league_downgrade();
+
 -- An opt-in creation path; old create_league(...) keeps existing semantics.
 create or replace function public.create_verified_league(
   league_name text, league_description text, season_weeks_input integer, runs_per_week_input integer
@@ -343,9 +358,9 @@ revoke execute on function public.league_table(uuid), public.my_leagues(),
   public.create_verified_league(text,text,integer,integer),
   public.submit_evidenced_run(uuid,text,timestamptz,numeric,integer,integer,boolean,text[],text[],integer),
   public.league_evidence_queue(uuid), public.review_run_evidence(uuid,text,text),
-  public.prevent_evidenced_run_edits()
+  public.prevent_evidenced_run_edits(), public.prevent_verified_league_downgrade()
 from public, anon;
-revoke execute on function public.prevent_evidenced_run_edits() from authenticated;
+revoke execute on function public.prevent_evidenced_run_edits(), public.prevent_verified_league_downgrade() from authenticated;
 grant execute on function public.league_table(uuid), public.my_leagues(),
   public.create_verified_league(text,text,integer,integer),
   public.submit_evidenced_run(uuid,text,timestamptz,numeric,integer,integer,boolean,text[],text[],integer),
