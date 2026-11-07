@@ -587,6 +587,16 @@ img, svg { display: block; }
 .modal-form input:focus, .modal-form select:focus, .modal-form textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(22,70,216,.1); }
 .modal-form label > small { color: var(--muted); font-size: 8px; }
 .modal-form .form-error { margin-top: 0; }
+
+.screenshot-preview { display: block; width: 100%; max-height: 250px; object-fit: contain; margin: 0 0 18px; border: 1px solid var(--line); background: #f6f8ff; }
+.screenshot-reading { display: flex; align-items: center; gap: 10px; min-height: 76px; color: var(--blue); font-size: 12px; font-weight: 800; }
+.screenshot-form > .screenshot-hint, .screenshot-form > .screenshot-moving { padding: 12px 14px; margin: 0 0 16px; background: #edf2ff; color: #35496f; font-size: 11px; line-height: 1.6; }
+.screenshot-form > .screenshot-moving { background: #fff5e7; color: #714c14; }
+.modal-form .screenshot-confirm { display: flex; align-items: flex-start; gap: 10px; padding: 14px 12px; border: 1px solid #dce1ed; background: #f8faff; font-size: 11px; line-height: 1.55; font-weight: 600; }
+.modal-form .screenshot-confirm input { width: 19px; height: 19px; min-height: 19px; flex: 0 0 19px; padding: 0; margin-top: 1px; accent-color: var(--blue); }
+.screenshot-form .form-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 650px) { .screenshot-form .form-grid.three { grid-template-columns: 1fr; } }
+
 .code-input { text-transform: uppercase; letter-spacing: 4px; font-size: 22px; font-weight: 900; text-align: center; }
 .notice { margin-bottom: 16px; padding: 13px 15px; display: flex; align-items: center; gap: 9px; font-size: 10px; font-weight: 700; border-left: 3px solid; }
 .notice svg { width: 17px; }

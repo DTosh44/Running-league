@@ -36,6 +36,7 @@ import {
 import { demoCredentials, useAuth } from './auth'
 import { leagueMembers } from './data'
 import { importActivityFile } from './activity-import'
+import { formatScreenshotTime, readStravaScreenshot } from './screenshot-import'
 import { usePlatform } from './platform'
 import { supabase } from './supabase'
 import { defaultPlanAnswers, generateTrainingPlan, parseDuration, weekdays } from './planner'
@@ -425,6 +426,25 @@ function ActivitiesPage() {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const filePicker = useRef<HTMLInputElement>(null)
+  const screenshotPicker = useRef<HTMLInputElement>(null)
+  const [screenshotModal, setScreenshotModal] = useState(false)
+  const [screenshotReading, setScreenshotReading] = useState(false)
+  const [screenshotSaving, setScreenshotSaving] = useState(false)
+  const [screenshotProgress, setScreenshotProgress] = useState(0)
+  const [screenshotPreview, setScreenshotPreview] = useState('')
+  const [screenshotError, setScreenshotError] = useState('')
+  const [screenshotHint, setScreenshotHint] = useState('')
+  const [screenshotName, setScreenshotName] = useState('Strava run')
+  const [screenshotDate, setScreenshotDate] = useState('')
+  const [screenshotDistance, setScreenshotDistance] = useState('')
+  const [screenshotElevation, setScreenshotElevation] = useState('')
+  const [screenshotDuration, setScreenshotDuration] = useState('')
+  const [screenshotMoving, setScreenshotMoving] = useState('')
+  const [screenshotElapsedConfirmed, setScreenshotElapsedConfirmed] = useState(false)
+  const [screenshotTraining, setScreenshotTraining] = useState(false)
+  useEffect(() => () => {
+    if (screenshotPreview && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(screenshotPreview)
+  }, [screenshotPreview])
   const scoringIds = useMemo(() => new Set(weeklyScoringRuns(activities, leagueRules.scoringRunsPerWeek).map((activity) => activity.id)), [activities])
   const visibleActivities = activities.filter((activity) => filter === 'all' || filter === 'training' ? filter === 'all' || activity.training : scoringIds.has(activity.id))
   const selected = visibleActivities.find((activity) => activity.id === selectedId) ?? visibleActivities[0]
@@ -450,8 +470,115 @@ function ActivitiesPage() {
       if (filePicker.current) filePicker.current.value = ''
     }
   }
-  return <div className="app-page"><div className="page-intro"><div><span className="eyebrow">ACTIVITY HISTORY</span><h2>Every run, explained.</h2><p>See the data behind each score and which runs count towards your league week.</p></div><div className="page-actions"><input ref={filePicker} type="file" accept=".gpx,.fit" hidden onChange={(event) => void uploadFile(event.target.files?.[0])} /><button className="button button-outline" disabled={busy} onClick={() => filePicker.current?.click()}><Upload size={17} /> {busy ? 'Importing…' : 'Import GPX / FIT'}</button><button className="button button-primary" onClick={() => { setModal(true); setError('') }}><Plus size={17} /> Enter run</button></div></div>{message && <div className="notice success"><CheckCircle2 />{message}</div>}{error && !modal && <div className="notice error">{error}</div>}<div className="activities-layout"><section className="panel activity-list-panel"><div className="activity-filter"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All runs</button><button className={filter === 'scoring' ? 'active' : ''} onClick={() => setFilter('scoring')}>Scoring</button><button className={filter === 'training' ? 'active' : ''} onClick={() => setFilter('training')}>Training</button></div>{visibleActivities.length ? visibleActivities.map((activity) => <div className={activity.id === selected?.id ? 'selectable-activity selected' : 'selectable-activity'} key={activity.id}><span className="counted-chip">{scoringIds.has(activity.id) ? 'COUNTS' : activity.training ? 'TRAINING' : 'NEXT BEST'}</span><ActivityRow activity={activity} onOpen={() => setSelectedId(activity.id)} /></div>) : <EmptyState title="No matching runs" text={activities.length ? 'Try a different filter.' : 'Enter a run manually or import a GPX/FIT file.'} action={activities.length ? undefined : 'Enter a run'} onAction={() => setModal(true)} />}</section>{selected ? <ScoreBreakdown activity={selected} /> : <aside className="score-breakdown empty-score"><Gauge /><h3>Your score breakdown will appear here.</h3></aside>}</div>
+  const closeScreenshot = () => {
+    if (screenshotReading || screenshotSaving) return
+    setScreenshotModal(false)
+    setScreenshotPreview('')
+  }
+  const uploadScreenshot = async (file?: File) => {
+    if (!file) return
+    setMessage('')
+    setError('')
+    setScreenshotError('')
+    setScreenshotHint('')
+    setScreenshotName('Strava run')
+    setScreenshotDate('')
+    setScreenshotDistance('')
+    setScreenshotElevation('')
+    setScreenshotDuration('')
+    setScreenshotMoving('')
+    setScreenshotElapsedConfirmed(false)
+    setScreenshotTraining(false)
+    setScreenshotProgress(0)
+    setScreenshotModal(true)
+    setScreenshotReading(true)
+    let preview = ''
+    try {
+      if (typeof URL.createObjectURL === 'function') preview = URL.createObjectURL(file)
+    } catch {
+      // Some test browsers cannot create an object URL from their File implementation.
+    }
+    setScreenshotPreview(preview)
+    try {
+      const metrics = await readStravaScreenshot(file, setScreenshotProgress)
+      setScreenshotDistance(metrics.distanceKm === null ? '' : String(metrics.distanceKm))
+      setScreenshotElevation(metrics.elevationM === null ? '' : String(metrics.elevationM))
+      setScreenshotDuration(metrics.elapsedSeconds === null ? '' : formatScreenshotTime(metrics.elapsedSeconds))
+      setScreenshotMoving(metrics.movingSeconds === null ? '' : formatScreenshotTime(metrics.movingSeconds))
+      if (metrics.elapsedSeconds === null) setScreenshotHint('Elapsed time was not found. Enter the full elapsed time from Strava; moving time alone cannot be used for scoring.')
+      else setScreenshotHint('Elapsed time was detected. Check it against the original activity before saving.')
+    } catch (caught) {
+      setScreenshotError(caught instanceof Error ? caught.message : 'Text recognition failed. Enter the run details from the screenshot manually.')
+      setScreenshotHint('You can still enter all the values below manually without using the reader.')
+    } finally {
+      setScreenshotReading(false)
+      if (screenshotPicker.current) screenshotPicker.current.value = ''
+    }
+  }
+  const submitScreenshot = async (event: FormEvent) => {
+    event.preventDefault()
+    setScreenshotError('')
+    setScreenshotSaving(true)
+    try {
+      if (!screenshotElapsedConfirmed) throw new Error('Confirm that the time includes stops and is the full elapsed time.')
+      const occurredMs = Date.parse(screenshotDate)
+      if (!screenshotDate || !Number.isFinite(occurredMs) || occurredMs > Date.now() + 5 * 60_000) {
+        throw new Error('Enter the actual run date and time (not a future date).')
+      }
+      const distance = Number(screenshotDistance)
+      const elevation = Number(screenshotElevation)
+      const elapsed = parseDuration(screenshotDuration)
+      if (!screenshotName.trim() || !screenshotDistance.trim() || !Number.isFinite(distance) || distance < 0.1 || distance > 500) {
+        throw new Error('Enter a valid run name and distance between 0.1 and 500 km.')
+      }
+      if (!screenshotElevation.trim() || !Number.isFinite(elevation) || !Number.isInteger(elevation) || elevation < 0 || elevation > 20000) {
+        throw new Error('Check the elevation gain. Enter 0 only when no ascent data is available.')
+      }
+      if (!elapsed) throw new Error('Enter a valid HH:MM:SS elapsed time.')
+      const occurredAt = new Date(occurredMs).toISOString()
+      const alreadyEntered = activities.some((activity) => activity.occurredAt
+        && Math.abs(new Date(activity.occurredAt).getTime() - occurredMs) < 60_000
+        && Math.abs(activity.distanceKm - distance) < 0.01
+        && activity.elapsedSeconds === elapsed)
+      if (alreadyEntered) throw new Error('This looks like a run already in your activity history. Check before adding it twice.')
+      await addActivity({
+        name: screenshotName.trim(),
+        occurredAt,
+        location: 'Strava screenshot',
+        source: 'Strava screenshot',
+        distanceKm: distance,
+        elevationM: elevation,
+        elapsedSeconds: elapsed,
+        training: screenshotTraining,
+        providerExternalId: ['screenshot', occurredAt, distance.toFixed(3), elapsed].join(':'),
+      })
+      setScreenshotModal(false)
+      setScreenshotPreview('')
+      setMessage('Strava screenshot run added and scored.')
+    } catch (caught) {
+      setScreenshotError(caught instanceof Error ? caught.message : 'The screenshot run could not be added.')
+    } finally {
+      setScreenshotSaving(false)
+    }
+  }
+  return <div className="app-page"><div className="page-intro"><div><span className="eyebrow">ACTIVITY HISTORY</span><h2>Every run, explained.</h2><p>See the data behind each score and which runs count towards your league week.</p></div><div className="page-actions"><input ref={filePicker} type="file" accept=".gpx,.fit" hidden onChange={(event) => void uploadFile(event.target.files?.[0])} /><input ref={screenshotPicker} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" aria-label="Choose Strava screenshot" hidden onChange={(event) => void uploadScreenshot(event.target.files?.[0])} /><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => screenshotPicker.current?.click()}><Upload size={17} /> Upload Strava screenshot</button><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => filePicker.current?.click()}><Upload size={17} /> {busy ? 'Importing…' : 'Import GPX / FIT'}</button><button className="button button-primary" onClick={() => { setModal(true); setError('') }}><Plus size={17} /> Enter run</button></div></div>{message && <div className="notice success"><CheckCircle2 />{message}</div>}{error && !modal && !screenshotModal && <div className="notice error">{error}</div>}<div className="activities-layout"><section className="panel activity-list-panel"><div className="activity-filter"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All runs</button><button className={filter === 'scoring' ? 'active' : ''} onClick={() => setFilter('scoring')}>Scoring</button><button className={filter === 'training' ? 'active' : ''} onClick={() => setFilter('training')}>Training</button></div>{visibleActivities.length ? visibleActivities.map((activity) => <div className={activity.id === selected?.id ? 'selectable-activity selected' : 'selectable-activity'} key={activity.id}><span className="counted-chip">{scoringIds.has(activity.id) ? 'COUNTS' : activity.training ? 'TRAINING' : 'NEXT BEST'}</span><ActivityRow activity={activity} onOpen={() => setSelectedId(activity.id)} /></div>) : <EmptyState title="No matching runs" text={activities.length ? 'Try a different filter.' : 'Upload a Strava screenshot, import GPX/FIT or enter a run.'} action={activities.length ? undefined : 'Enter a run'} onAction={() => setModal(true)} />}</section>{selected ? <ScoreBreakdown activity={selected} /> : <aside className="score-breakdown empty-score"><Gauge /><h3>Your score breakdown will appear here.</h3></aside>}</div>
     <section className="method-panel"><span className="method-icon"><BarChart3 /></span><div><span className="eyebrow">CURRENT METHODOLOGY</span><h3>RunningScore is designed to be inspectable.</h3><p>It uses elapsed time, effort distance and Riegel distance normalisation. Imported runs currently use activity totals; interval blocks and heart rate are not included in their score.</p></div><div className="method-stats"><span><small>Benchmark</small><strong>20:21 5K</strong></span><span><small>Climb adjustment</small><strong>100 m = 1 km</strong></span><span><small>Scale</small><strong>1–25 points</strong></span></div></section>
+    {screenshotModal && <Modal title="Review Strava screenshot" onClose={closeScreenshot}>
+      <form className="modal-form screenshot-form" onSubmit={submitScreenshot}>
+        <p>The screenshot is read in your browser, not uploaded or saved. Recognition can make mistakes: check every value against Strava before adding a score.</p>
+        {screenshotPreview && <img className="screenshot-preview" src={screenshotPreview} alt="Selected Strava screenshot to check against the fields" />}
+        {screenshotReading ? <div className="screenshot-reading" role="status"><RefreshCw size={18} /> Reading screenshot locally… {screenshotProgress > 0 ? screenshotProgress + '%' : 'starting'}</div> : <>
+          {screenshotHint && <p className="screenshot-hint">{screenshotHint}</p>}
+          {screenshotMoving && <p className="screenshot-moving"><strong>Moving time detected: {screenshotMoving}.</strong> RunningScore needs elapsed time, including stops. Do not use moving time unless they are identical.</p>}
+          <div className="form-grid two"><label>Run name<input value={screenshotName} onChange={(event) => setScreenshotName(event.target.value)} maxLength={120} required /></label><label>Run date and time<input aria-label="Run date and time" type="datetime-local" value={screenshotDate} onChange={(event) => setScreenshotDate(event.target.value)} required /><small>Enter the actual date and start time. Screenshots may omit or shorten this.</small></label></div>
+          <div className="form-grid three"><label>Distance (km)<input type="number" min="0.1" max="500" step="0.001" value={screenshotDistance} onChange={(event) => setScreenshotDistance(event.target.value)} required /></label><label>Elevation gain (m)<input aria-label="Elevation gain (m)" type="number" min="0" max="20000" step="1" value={screenshotElevation} onChange={(event) => setScreenshotElevation(event.target.value)} required /><small>Enter 0 if ascent data is unavailable.</small></label><label>Elapsed time (HH:MM:SS)<input value={screenshotDuration} onChange={(event) => setScreenshotDuration(event.target.value)} placeholder="00:30:00" pattern="\d{1,3}:\d{2}:\d{2}" required /></label></div>
+          <label className="screenshot-confirm"><input type="checkbox" checked={screenshotElapsedConfirmed} onChange={(event) => setScreenshotElapsedConfirmed(event.target.checked)} required /><span>I checked the distance, elevation, date and full elapsed time against Strava. This is not just moving time.</span></label>
+          <label className="toggle-row"><span><strong>Training only</strong><small>Don't count this activity in league scoring.</small></span><input type="checkbox" checked={screenshotTraining} onChange={(event) => setScreenshotTraining(event.target.checked)} /></label>
+          {screenshotError && <div className="form-error" role="alert">{screenshotError}</div>}
+          <button className="button button-primary button-full" disabled={screenshotSaving}>{screenshotSaving ? 'Saving…' : 'Add screenshot run'} <ArrowRight size={17} /></button>
+        </>}
+      </form>
+    </Modal>}
     {modal && <Modal title="Enter a run" onClose={() => setModal(false)}><form className="modal-form" onSubmit={submitManual}><div className="form-grid two"><label>Run name<input value={name} onChange={(event) => setName(event.target.value)} required autoFocus /></label><label>Date and time<input type="datetime-local" value={occurredAt} onChange={(event) => setOccurredAt(event.target.value)} required /></label></div><label>Location<input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Optional" /></label><div className="form-grid three"><label>Distance<div className="input-suffix"><input type="number" min="0.1" max="500" step="0.01" value={distanceKm} onChange={(event) => setDistanceKm(Number(event.target.value))} required /><span>km</span></div></label><label>Elevation<div className="input-suffix"><input type="number" min="0" max="20000" value={elevationM} onChange={(event) => setElevationM(Number(event.target.value))} required /><span>m</span></div></label><label>Elapsed time<input value={duration} onChange={(event) => setDuration(event.target.value)} pattern="\d{1,2}:\d{2}:\d{2}" placeholder="00:30:00" required /><small>HH:MM:SS</small></label></div><label className="toggle-row"><span><strong>Training only</strong><small>Keep this run in your plan history without counting it in league scoring.</small></span><input type="checkbox" checked={training} onChange={(event) => setTraining(event.target.checked)} /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Calculating…' : 'Add and score run'} <ArrowRight size={17} /></button></form></Modal>}
   </div>
 }
@@ -529,7 +656,7 @@ function ProfilePage() {
       else await connectStrava()
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Strava could not be reached.') } finally { setBusy(false) }
   }
-  return <div className="app-page"><div className="page-intro compact"><div><span className="eyebrow">YOUR ACCOUNT</span><h2>Profile and connections.</h2><p>Manage your runner details, activity sources and account support.</p></div></div>{message && <div className="notice success"><CheckCircle2 />{message}</div>}{error && <div className="notice error">{error}</div>}<div className="profile-grid"><section className="panel profile-card"><Avatar initials={user?.initials ?? 'RL'} colour="#1646d8" size="large" /><div><h3>{user?.name}</h3><p>{user?.email}</p><span>RunningLeague beta member</span></div><button className="button button-outline button-small" onClick={() => { setName(user?.name ?? ''); setEditing(true) }}>Edit profile</button></section><section className="panel connection-card"><header><span className="icon-tile"><Activity /></span><div><h3>Activity connections</h3><p>Bring your runs in automatically or upload activity files.</p></div></header><div><span><strong>Strava</strong><small>{stravaConnected ? 'Connected · last 90 days available' : stravaAvailable ? 'Import running activities securely' : 'Connection is not available yet; use GPX or FIT upload'}</small></span><button disabled={busy || !cloudConfigured || !stravaAvailable} onClick={() => void providerAction()}>{busy ? 'Working…' : stravaConnected ? <><RefreshCw size={15} /> Sync</> : stravaAvailable ? 'Connect' : 'Not available'}</button></div><div><span><strong>GPX / FIT upload</strong><small>Import from Garmin and other running watches</small></span><button onClick={() => navigate('/app/activities')}>Upload</button></div><div className="provider-coming"><span><strong>Direct Garmin sync</strong><small>Requires Garmin partner approval; FIT import works now</small></span><em>Not available</em></div></section><section className="panel account-links"><div><ShieldCheck /><span><h3>Privacy and support</h3><p>Read how data is used or send a support request.</p></span></div><nav><AppLink to="/privacy">Privacy Policy <ArrowRight size={15} /></AppLink><AppLink to="/terms">Terms of Use <ArrowRight size={15} /></AppLink><AppLink to="/support">Contact support <ArrowRight size={15} /></AppLink></nav></section></div>{editing && <Modal title="Edit profile" onClose={() => setEditing(false)}><form className="modal-form" onSubmit={saveProfile}><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} minLength={2} required autoFocus /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button></form></Modal>}</div>
+  return <div className="app-page"><div className="page-intro compact"><div><span className="eyebrow">YOUR ACCOUNT</span><h2>Profile and connections.</h2><p>Manage your runner details, activity sources and account support.</p></div></div>{message && <div className="notice success"><CheckCircle2 />{message}</div>}{error && <div className="notice error">{error}</div>}<div className="profile-grid"><section className="panel profile-card"><Avatar initials={user?.initials ?? 'RL'} colour="#1646d8" size="large" /><div><h3>{user?.name}</h3><p>{user?.email}</p><span>RunningLeague beta member</span></div><button className="button button-outline button-small" onClick={() => { setName(user?.name ?? ''); setEditing(true) }}>Edit profile</button></section><section className="panel connection-card"><header><span className="icon-tile"><Activity /></span><div><h3>Activity connections</h3><p>Bring your runs in automatically or upload activity files.</p></div></header><div><span><strong>Strava</strong><small>{stravaConnected ? 'Connected · last 90 days available' : stravaAvailable ? 'Import running activities securely' : 'Connection is not available yet; use screenshot, GPX or FIT upload'}</small></span><button disabled={busy || !cloudConfigured || !stravaAvailable} onClick={() => void providerAction()}>{busy ? 'Working…' : stravaConnected ? <><RefreshCw size={15} /> Sync</> : stravaAvailable ? 'Connect' : 'Not available'}</button></div><div><span><strong>Strava screenshots</strong><small>Upload a screenshot and confirm the extracted figures</small></span><button onClick={() => navigate('/app/activities')}>Upload</button></div><div><span><strong>GPX / FIT upload</strong><small>Import from Garmin and other running watches</small></span><button onClick={() => navigate('/app/activities')}>Upload</button></div><div className="provider-coming"><span><strong>Direct Garmin sync</strong><small>Requires Garmin partner approval; FIT import works now</small></span><em>Not available</em></div></section><section className="panel account-links"><div><ShieldCheck /><span><h3>Privacy and support</h3><p>Read how data is used or send a support request.</p></span></div><nav><AppLink to="/privacy">Privacy Policy <ArrowRight size={15} /></AppLink><AppLink to="/terms">Terms of Use <ArrowRight size={15} /></AppLink><AppLink to="/support">Contact support <ArrowRight size={15} /></AppLink></nav></section></div>{editing && <Modal title="Edit profile" onClose={() => setEditing(false)}><form className="modal-form" onSubmit={saveProfile}><label>Your name<input value={name} onChange={(event) => setName(event.target.value)} minLength={2} required autoFocus /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</button></form></Modal>}</div>
 }
 
 function ResetPasswordPage() {
@@ -547,9 +674,9 @@ function ResetPasswordPage() {
 }
 
 function LegalPage({ type }: { type: 'privacy' | 'terms' }) {
-  return <div className="simple-page"><PublicHeader /><main className="legal-page"><span className="eyebrow">RUNNINGLEAGUE BETA</span><h1>{type === 'privacy' ? 'Privacy Policy' : 'Terms of Use'}</h1><p className="legal-updated">Last updated: 20 September 2026</p>{type === 'privacy' ? <>
+  return <div className="simple-page"><PublicHeader /><main className="legal-page"><span className="eyebrow">RUNNINGLEAGUE BETA</span><h1>{type === 'privacy' ? 'Privacy Policy' : 'Terms of Use'}</h1><p className="legal-updated">Last updated: 7 November 2026</p>{type === 'privacy' ? <>
     <h2>What we collect</h2><p>We collect the account details you provide, your league membership, training-plan answers, preferences and running activity data. Connected services such as Strava share activity data only after you authorise access.</p>
-    <h2>How we use it</h2><p>We use this information to operate your account, score activities, generate training plans, show private league tables, provide support and improve the beta. We do not sell your personal data.</p>
+    <h2>Screenshot processing</h2><p>If you select a Strava screenshot, the text is recognised on your device. The screenshot is not sent to or stored by RunningLeague; only the run figures you review and submit are saved. The browser loads free OCR code and language data from third-party hosts.</p><h2>How we use it</h2><p>We use this information to operate your account, score activities, generate training plans, show private league tables, provide support and improve the beta. We do not sell your personal data.</p>
     <h2>Storage and security</h2><p>Account and product data is stored using managed cloud services with access controls. Passwords are handled by our authentication provider and are not stored in the RunningLeague application database.</p>
     <h2>Your choices</h2><p>You may revoke provider access in your Strava settings, or ask for access, correction or deletion of your data. During the beta, submit privacy requests through the support page.</p>
     <h2>Retention and lawful basis</h2><p>We process data to provide the service you request and for our legitimate interests in securing and improving it. We retain active account data while the account is in use and remove it following a valid deletion request, subject to legal requirements.</p>

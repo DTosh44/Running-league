@@ -37,6 +37,14 @@ Strava code is present but inactive. The connected account's API settings requir
 
 Garmin's direct API requires partner approval. Garmin users can use the working FIT-file import without a direct Garmin connection.
 
+## Strava screenshot pilot
+
+The Activities page now offers **Upload Strava screenshot** for PNG, JPG and WebP images (maximum 12 MB). A pinned Tesseract.js 7 OCR build and language assets download to the browser on first use; recognition is performed locally with no per-image AI API charge. The screenshot itself is not sent to or stored by RunningLeague. An internet connection is needed to load the free reader; if recognition fails, users can still enter the numbers manually.
+
+Extracted distance, elevation and explicitly labelled **elapsed time** are editable before a run is saved. Moving time is shown only as a warning/reference: it is never substituted for elapsed time. A date/start time and confirmation checkbox are mandatory. Duplicate checks compare against existing activities, with an additional server uniqueness key for identical screenshot submissions; this is not fraud-proof evidence. Only confirmed activity metrics are persisted. To avoid a production database migration, screenshot entries use the existing database source constraint (stored as Manual), while a screenshot-prefixed external ID enables the UI to display **Strava screenshot**.
+
+Before inviting friends, verify the Vercel production deployment, complete real-device screenshot testing and a real two-account signup/invite/scoring test. Production email confirmation and recovery still require SMTP configuration. Direct Strava API integration remains inactive.
+
 ## Cloud setup
 
 1. Create a Supabase project.

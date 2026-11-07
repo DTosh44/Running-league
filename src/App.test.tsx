@@ -1,8 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { AuthProvider } from './auth'
 import { PlatformProvider } from './platform'
+
+vi.mock('./screenshot-import', () => ({
+  readStravaScreenshot: async () => ({ distanceKm: 5.02, elevationM: 32, elapsedSeconds: 1460, movingSeconds: 1440 }),
+  formatScreenshotTime: (seconds: number) => {
+    const clock = [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60]
+    return clock.map((value) => String(value).padStart(2, '0')).join(':')
+  },
+}))
 
 const renderApp = (path = '/') => {
   window.history.replaceState({}, '', path)
@@ -64,6 +72,26 @@ describe('RunningLeague product', () => {
     fireEvent.click(screen.getByRole('button', { name: /Add and score run/i }))
     expect(await screen.findByText('Run added and scored.')).toBeInTheDocument()
     expect(screen.getByText('Lunch 5K')).toBeInTheDocument()
+  })
+
+
+  it('requires a screenshot review before adding a Strava-sourced run', async () => {
+    renderApp('/login')
+    await logInDemo()
+    fireEvent.click(screen.getByRole('link', { name: /Activities/i }))
+    const picker = screen.getByLabelText('Choose Strava screenshot')
+    fireEvent.change(picker, { target: { files: [new File(['image'], 'run.png', { type: 'image/png' })] } })
+    expect(await screen.findByText(/Moving time detected/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Distance (km)')).toHaveValue(5.02)
+    expect(screen.getByLabelText('Elevation gain (m)')).toHaveValue(32)
+    expect(screen.getByLabelText('Elapsed time (HH:MM:SS)')).toHaveValue('00:24:20')
+    expect(screen.getByLabelText('Run date and time')).toHaveValue('')
+
+    fireEvent.change(screen.getByLabelText('Run date and time'), { target: { value: '2026-11-07T08:30' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: /I checked the distance/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Add screenshot run/ }))
+    expect(await screen.findByText('Strava screenshot run added and scored.')).toBeInTheDocument()
+    expect(screen.getByText('Strava run')).toBeInTheDocument()
   })
 
   it('creates a private league with an invite code', async () => {

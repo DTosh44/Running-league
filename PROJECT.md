@@ -1,6 +1,6 @@
 # Running League — project status
 
-Last reviewed: 1 October 2026
+Last reviewed: 7 November 2026
 
 ## Purpose
 
@@ -31,6 +31,15 @@ Public launch is currently blocked by email-delivery readiness and external prov
 Production beta: `https://running-league-alpha.vercel.app/`
 
 The deployed environment is not yet ready for broad public signup.
+
+## Friends-only screenshot pilot
+
+- Strava screenshot importer implemented with automated lint/tests/build passing. Verify the main-branch Vercel deployment and real screenshot behaviour before inviting friends.
+- Free browser-based Tesseract.js OCR, with confirmation of distance, elevation, date and **elapsed** time before saving; screenshot image is not retained.
+- No paid Strava credentials, backend OCR usage, database schema change or RunningScore v1.0 changes needed.
+- Screenshots are recorded using the existing Manual database source plus a screenshot-prefixed external ID. The frontend displays the screenshot origin; exact duplicate submissions get a uniqueness check. This is not a fraud-proof verification system.
+- Review and test on actual UK Strava screenshot layouts, iPhone/Android browsers, and two separate real league accounts before release.
+- SMTP/email onboarding remains a separate launch blocker. This feature does not make the app ready for friends to sign up by itself.
 
 ## Current milestone
 
