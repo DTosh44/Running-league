@@ -492,7 +492,13 @@ function ActivitiesPage() {
     setScreenshotProgress(0)
     setScreenshotModal(true)
     setScreenshotReading(true)
-    setScreenshotPreview(typeof URL.createObjectURL === 'function' ? URL.createObjectURL(file) : '')
+    let preview = ''
+    try {
+      if (typeof URL.createObjectURL === 'function') preview = URL.createObjectURL(file)
+    } catch {
+      // Some test browsers cannot create an object URL from their File implementation.
+    }
+    setScreenshotPreview(preview)
     try {
       const metrics = await readStravaScreenshot(file, setScreenshotProgress)
       setScreenshotDistance(metrics.distanceKm === null ? '' : String(metrics.distanceKm))
