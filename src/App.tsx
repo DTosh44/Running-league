@@ -479,7 +479,7 @@ function ScoreBreakdown({ activity }: { activity: ActivityRecord }) {
 }
 
 function ActivitiesPage() {
-  const { activities, addActivity } = usePlatform()
+  const { activities, leagues, evidenceStatuses, addActivity, submitScreenshotEvidence } = usePlatform()
   const [selectedId, setSelectedId] = useState(activities[0]?.id ?? '')
   const [filter, setFilter] = useState<'all' | 'scoring' | 'training'>('all')
   const [modal, setModal] = useState(false)
@@ -495,11 +495,16 @@ function ActivitiesPage() {
   const [message, setMessage] = useState('')
   const filePicker = useRef<HTMLInputElement>(null)
   const screenshotPicker = useRef<HTMLInputElement>(null)
+  const screenshotExtraPicker = useRef<HTMLInputElement>(null)
   const [screenshotModal, setScreenshotModal] = useState(false)
   const [screenshotReading, setScreenshotReading] = useState(false)
   const [screenshotSaving, setScreenshotSaving] = useState(false)
   const [screenshotProgress, setScreenshotProgress] = useState(0)
-  const [screenshotPreview, setScreenshotPreview] = useState('')
+  const [screenshotFiles, setScreenshotFiles] = useState<File[]>([])
+  const [screenshotPreviews, setScreenshotPreviews] = useState<string[]>([])
+  const [screenshotWarnings, setScreenshotWarnings] = useState<string[]>([])
+  const [screenshotDetectedElapsed, setScreenshotDetectedElapsed] = useState<number | null>(null)
+  const [screenshotLeagueId, setScreenshotLeagueId] = useState('')
   const [screenshotError, setScreenshotError] = useState('')
   const [screenshotHint, setScreenshotHint] = useState('')
   const [screenshotName, setScreenshotName] = useState('Strava run')
@@ -511,9 +516,16 @@ function ActivitiesPage() {
   const [screenshotElapsedConfirmed, setScreenshotElapsedConfirmed] = useState(false)
   const [screenshotTraining, setScreenshotTraining] = useState(false)
   useEffect(() => () => {
-    if (screenshotPreview && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(screenshotPreview)
-  }, [screenshotPreview])
-  const scoringIds = useMemo(() => new Set(weeklyScoringRuns(activities, leagueRules.scoringRunsPerWeek).map((activity) => activity.id)), [activities])
+    if (typeof URL.revokeObjectURL === 'function') {
+      screenshotPreviews.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [screenshotPreviews])
+  const selectedScoringLeague = leagues.find((league) => league.requireVerifiedRuns) ?? leagues[0]
+  const eligibleActivities = useMemo(() => selectedScoringLeague?.requireVerifiedRuns
+    ? activities.filter((activity) => evidenceStatuses.some((item) =>
+        item.activityId === activity.id && item.leagueId === selectedScoringLeague.id && item.status === 'approved'))
+    : activities, [activities, evidenceStatuses, selectedScoringLeague])
+  const scoringIds = useMemo(() => new Set(weeklyScoringRuns(eligibleActivities, leagueRules.scoringRunsPerWeek).map((activity) => activity.id)), [eligibleActivities])
   const visibleActivities = activities.filter((activity) => filter === 'all' || filter === 'training' ? filter === 'all' || activity.training : scoringIds.has(activity.id))
   const selected = visibleActivities.find((activity) => activity.id === selectedId) ?? visibleActivities[0]
 
@@ -541,54 +553,64 @@ function ActivitiesPage() {
   const closeScreenshot = () => {
     if (screenshotReading || screenshotSaving) return
     setScreenshotModal(false)
-    setScreenshotPreview('')
+    setScreenshotFiles([])
+    setScreenshotPreviews([])
   }
-  const uploadScreenshot = async (file?: File) => {
-    if (!file) return
-    setMessage('')
-    setError('')
-    setScreenshotError('')
-    setScreenshotHint('')
-    setScreenshotName('Strava run')
-    setScreenshotDate('')
-    setScreenshotDistance('')
-    setScreenshotElevation('')
-    setScreenshotDuration('')
-    setScreenshotMoving('')
-    setScreenshotElapsedConfirmed(false)
-    setScreenshotTraining(false)
-    setScreenshotProgress(0)
-    setScreenshotModal(true)
-    setScreenshotReading(true)
-    let preview = ''
-    try {
-      if (typeof URL.createObjectURL === 'function') preview = URL.createObjectURL(file)
-    } catch {
-      // Some test browsers cannot create an object URL from their File implementation.
+
+  const uploadScreenshotFiles = async (files: File[]) => {
+    setMessage(''); setError(''); setScreenshotError(''); setScreenshotHint('')
+    setScreenshotModal(true); setScreenshotReading(true); setScreenshotProgress(0)
+    if (!screenshotFiles.length) {
+      setScreenshotName('Strava run'); setScreenshotDate(''); setScreenshotElapsedConfirmed(false)
+      setScreenshotLeagueId(leagues.find((league) => league.requireVerifiedRuns)?.id ?? leagues[0]?.id ?? '')
     }
-    setScreenshotPreview(preview)
     try {
-      const metrics = await readStravaScreenshot(file, setScreenshotProgress)
-      setScreenshotDistance(metrics.distanceKm === null ? '' : String(metrics.distanceKm))
-      setScreenshotElevation(metrics.elevationM === null ? '' : String(metrics.elevationM))
-      setScreenshotDuration(metrics.elapsedSeconds === null ? '' : formatScreenshotTime(metrics.elapsedSeconds))
-      setScreenshotMoving(metrics.movingSeconds === null ? '' : formatScreenshotTime(metrics.movingSeconds))
-      if (metrics.elapsedSeconds === null) setScreenshotHint('Elapsed time was not found. Enter the full elapsed time from Strava; moving time alone cannot be used for scoring.')
-      else setScreenshotHint('Elapsed time was detected. Check it against the original activity before saving.')
+      validateEvidenceFiles(files)
+      setScreenshotFiles(files)
+      setScreenshotPreviews(files.map((file) => {
+        try { return URL.createObjectURL(file) } catch { return '' }
+      }))
+      const metrics = []
+      let failures = 0
+      for (const [index, file] of files.entries()) {
+        try {
+          metrics.push(await readStravaScreenshot(file, (percent) => {
+            setScreenshotProgress(Math.round((index * 100 + percent) / files.length))
+          }))
+        } catch {
+          metrics.push({ distanceKm: null, elevationM: null, elapsedSeconds: null, movingSeconds: null })
+          failures += 1
+        }
+      }
+      const combined = reconcileScreenshots(metrics)
+      setScreenshotDistance(combined.distanceKm === null ? '' : String(combined.distanceKm))
+      setScreenshotElevation(combined.elevationM === null ? '' : String(combined.elevationM))
+      setScreenshotDuration(combined.elapsedSeconds === null ? '' : formatScreenshotTime(combined.elapsedSeconds))
+      setScreenshotMoving(combined.movingSeconds === null ? '' : formatScreenshotTime(combined.movingSeconds))
+      setScreenshotDetectedElapsed(combined.elapsedSeconds)
+      setScreenshotWarnings([
+        ...combined.warnings,
+        ...(failures ? ['Screenshot text recognition was incomplete: organiser must check the originals'] : []),
+      ])
+      setScreenshotHint(combined.recognisedElapsed
+        ? 'Elapsed time found. Check both original images and every value before submitting.'
+        : 'Elapsed time was not recognised. Add the Strava activity details screen if necessary. The organiser must be able to see elapsed time clearly.')
     } catch (caught) {
-      setScreenshotError(caught instanceof Error ? caught.message : 'Text recognition failed. Enter the run details from the screenshot manually.')
-      setScreenshotHint('You can still enter all the values below manually without using the reader.')
+      setScreenshotFiles([]); setScreenshotPreviews([])
+      setScreenshotError(caught instanceof Error ? caught.message : 'These screenshots could not be read.')
     } finally {
       setScreenshotReading(false)
       if (screenshotPicker.current) screenshotPicker.current.value = ''
+      if (screenshotExtraPicker.current) screenshotExtraPicker.current.value = ''
     }
   }
   const submitScreenshot = async (event: FormEvent) => {
     event.preventDefault()
-    setScreenshotError('')
-    setScreenshotSaving(true)
+    setScreenshotError(''); setScreenshotSaving(true)
     try {
-      if (!screenshotElapsedConfirmed) throw new Error('Confirm that the time includes stops and is the full elapsed time.')
+      validateEvidenceFiles(screenshotFiles)
+      if (!screenshotLeagueId) throw new Error('Join or create a private league before submitting evidence.')
+      if (!screenshotElapsedConfirmed) throw new Error('Confirm elapsed time is visible on the screenshots, not merely typed in.')
       const occurredMs = Date.parse(screenshotDate)
       if (!screenshotDate || !Number.isFinite(occurredMs) || occurredMs > Date.now() + 5 * 60_000) {
         throw new Error('Enter the actual run date and time (not a future date).')
@@ -600,34 +622,25 @@ function ActivitiesPage() {
         throw new Error('Enter a valid run name and distance between 0.1 and 500 km.')
       }
       if (!screenshotElevation.trim() || !Number.isFinite(elevation) || !Number.isInteger(elevation) || elevation < 0 || elevation > 20000) {
-        throw new Error('Check the elevation gain. Enter 0 only when no ascent data is available.')
+        throw new Error('Check the elevation gain. Enter 0 only if there was no ascent.')
       }
-      if (!elapsed) throw new Error('Enter a valid HH:MM:SS elapsed time.')
+      if (!elapsed || elapsed > 604800) throw new Error('Enter a valid HH:MM:SS elapsed time.')
       const occurredAt = new Date(occurredMs).toISOString()
       const alreadyEntered = activities.some((activity) => activity.occurredAt
         && Math.abs(new Date(activity.occurredAt).getTime() - occurredMs) < 60_000
         && Math.abs(activity.distanceKm - distance) < 0.01
         && activity.elapsedSeconds === elapsed)
-      if (alreadyEntered) throw new Error('This looks like a run already in your activity history. Check before adding it twice.')
-      await addActivity({
-        name: screenshotName.trim(),
-        occurredAt,
-        location: 'Strava screenshot',
-        source: 'Strava screenshot',
-        distanceKm: distance,
-        elevationM: elevation,
-        elapsedSeconds: elapsed,
-        training: screenshotTraining,
-        providerExternalId: ['screenshot', occurredAt, distance.toFixed(3), elapsed].join(':'),
-      })
-      setScreenshotModal(false)
-      setScreenshotPreview('')
-      setMessage('Strava screenshot run added and scored.')
+      if (alreadyEntered) throw new Error('This looks like a run already in your history. Check before adding it twice.')
+      await submitScreenshotEvidence({
+        name: screenshotName.trim(), occurredAt, location: 'Strava screenshot',
+        source: 'Strava screenshot', distanceKm: distance, elevationM: elevation,
+        elapsedSeconds: elapsed, training: screenshotTraining,
+      }, screenshotLeagueId, screenshotFiles, screenshotWarnings, screenshotDetectedElapsed)
+      setScreenshotModal(false); setScreenshotFiles([]); setScreenshotPreviews([])
+      setMessage('Run submitted with private evidence. In verified leagues it will count only after the organiser approves it.')
     } catch (caught) {
-      setScreenshotError(caught instanceof Error ? caught.message : 'The screenshot run could not be added.')
-    } finally {
-      setScreenshotSaving(false)
-    }
+      setScreenshotError(caught instanceof Error ? caught.message : 'The screenshot run could not be submitted.')
+    } finally { setScreenshotSaving(false) }
   }
   return <div className="app-page"><div className="page-intro"><div><span className="eyebrow">ACTIVITY HISTORY</span><h2>Every run, explained.</h2><p>See the data behind each score and which runs count towards your league week.</p></div><div className="page-actions"><input ref={filePicker} type="file" accept=".gpx,.fit" hidden onChange={(event) => void uploadFile(event.target.files?.[0])} /><input ref={screenshotPicker} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" aria-label="Choose Strava screenshot" hidden onChange={(event) => void uploadScreenshot(event.target.files?.[0])} /><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => screenshotPicker.current?.click()}><Upload size={17} /> Upload Strava screenshot</button><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => filePicker.current?.click()}><Upload size={17} /> {busy ? 'Importing…' : 'Import GPX / FIT'}</button><button className="button button-primary" onClick={() => { setModal(true); setError('') }}><Plus size={17} /> Enter run</button></div></div>{message && <div className="notice success"><CheckCircle2 />{message}</div>}{error && !modal && !screenshotModal && <div className="notice error">{error}</div>}<div className="activities-layout"><section className="panel activity-list-panel"><div className="activity-filter"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All runs</button><button className={filter === 'scoring' ? 'active' : ''} onClick={() => setFilter('scoring')}>Scoring</button><button className={filter === 'training' ? 'active' : ''} onClick={() => setFilter('training')}>Training</button></div>{visibleActivities.length ? visibleActivities.map((activity) => <div className={activity.id === selected?.id ? 'selectable-activity selected' : 'selectable-activity'} key={activity.id}><span className="counted-chip">{scoringIds.has(activity.id) ? 'COUNTS' : activity.training ? 'TRAINING' : 'NEXT BEST'}</span><ActivityRow activity={activity} onOpen={() => setSelectedId(activity.id)} /></div>) : <EmptyState title="No matching runs" text={activities.length ? 'Try a different filter.' : 'Upload a Strava screenshot, import GPX/FIT or enter a run.'} action={activities.length ? undefined : 'Enter a run'} onAction={() => setModal(true)} />}</section>{selected ? <ScoreBreakdown activity={selected} /> : <aside className="score-breakdown empty-score"><Gauge /><h3>Your score breakdown will appear here.</h3></aside>}</div>
     <section className="method-panel"><span className="method-icon"><BarChart3 /></span><div><span className="eyebrow">CURRENT METHODOLOGY</span><h3>RunningScore is designed to be inspectable.</h3><p>It uses elapsed time, effort distance and Riegel distance normalisation. Imported runs currently use activity totals; interval blocks and heart rate are not included in their score.</p></div><div className="method-stats"><span><small>Benchmark</small><strong>20:21 5K</strong></span><span><small>Climb adjustment</small><strong>100 m = 1 km</strong></span><span><small>Scale</small><strong>1–25 points</strong></span></div></section>
