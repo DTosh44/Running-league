@@ -45,10 +45,14 @@ function loadLibrary(): Promise<TesseractLibrary> {
   return loadingLibrary
 }
 
-function matchNearLabel(lines: string[], label: RegExp, value: RegExp): RegExpMatchArray | null {
+function matchNearLabel(lines: string[], label: RegExp, value: RegExp, allowPrevious = false): RegExpMatchArray | null {
   for (let index = 0; index < lines.length; index += 1) {
     if (!label.test(lines[index])) continue
-    const candidates = [lines[index].replace(label, ' '), lines[index + 1] ?? '', lines[index - 1] ?? '']
+    const next = lines[index + 1] ?? ''
+    // Do not borrow an unrelated time from the next labelled metric.
+    const candidates = [lines[index].replace(label, ' ')]
+    if (allowPrevious || !/\b(moving|pace|distance|elevation)\b/i.test(next)) candidates.push(next)
+    if (allowPrevious) candidates.push(lines[index - 1] ?? '')
     for (const candidate of candidates) {
       const match = candidate.match(value)
       if (match) return match
@@ -81,10 +85,10 @@ export function parseStravaScreenshotText(text: string): ScreenshotMetrics {
   const distancePattern = /(\d{1,3}(?:[.,]\d{1,3})?)\s*(km|kms|mi|miles)\b/i
   const elevationPattern = /(\d{1,5}(?:[.,]\d{1,2})?)\s*(m|metres|meters|ft|feet)\b/i
   const clockPattern = /\b(\d{1,3}:\d{2}(?::\d{2})?)\b/
-  const distanceMatch = matchNearLabel(lines, /\bdistance\b/i, distancePattern)
+  const distanceMatch = matchNearLabel(lines, /\bdistance\b/i, distancePattern, true)
     ?? lines.map((line) => line.match(distancePattern)).find(Boolean)
-  const elevationMatch = matchNearLabel(lines, /\b(?:elevation(?: gain)?|total ascent|elev\.? gain)\b/i, elevationPattern)
-  const elapsedMatch = matchNearLabel(lines, /\belapsed(?:\s+time)?\b/i, clockPattern)
+  const elevationMatch = matchNearLabel(lines, /\b(?:elevation(?: gain)?|total ascent|elev\.? gain)\b/i, elevationPattern, true)
+  const elapsedMatch = matchNearLabel(lines, /\belapsed\s+time\b/i, clockPattern)
   const movingMatch = matchNearLabel(lines, /\bmoving(?:\s+time)?\b/i, clockPattern)
 
   const distanceNumber = distanceMatch ? Number(distanceMatch[1].replace(',', '.')) : NaN
