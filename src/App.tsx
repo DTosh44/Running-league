@@ -37,11 +37,12 @@ import { demoCredentials, useAuth } from './auth'
 import { leagueMembers } from './data'
 import { importActivityFile } from './activity-import'
 import { formatScreenshotTime, readStravaScreenshot } from './screenshot-import'
+import { reconcileScreenshots, validateEvidenceFiles } from './verified-evidence'
 import { usePlatform } from './platform'
 import { supabase } from './supabase'
 import { defaultPlanAnswers, generateTrainingPlan, parseDuration, weekdays } from './planner'
 import { formatPace, leagueRules, scoringConfig, scoringVersion } from './scoring'
-import type { ActivityRecord, LeagueTableEntry, PlanAnswers, TrainingPlan } from './types'
+import type { ActivityRecord, EvidenceReviewRow, LeagueTableEntry, PlanAnswers, TrainingPlan } from './types'
 
 export function navigate(path: string) {
   window.history.pushState({}, '', path)
@@ -353,7 +354,7 @@ function DashboardPage() {
 
 function LeaguesPage() {
   const { user } = useAuth()
-  const { leagues, createLeague, joinLeague, getLeagueTable } = usePlatform()
+  const { leagues, createLeague, joinLeague, getLeagueTable, getEvidenceQueue, reviewEvidence, getEvidenceLinks } = usePlatform()
   const [modal, setModal] = useState<'create' | 'join' | null>(null)
   const [selectedId, setSelectedId] = useState('')
   const [table, setTable] = useState<LeagueTableEntry[]>([])
@@ -363,6 +364,13 @@ function LeaguesPage() {
   const [description, setDescription] = useState('')
   const [seasonWeeks, setSeasonWeeks] = useState(10)
   const [runsPerWeek, setRunsPerWeek] = useState(3)
+  const [requireVerifiedRuns, setRequireVerifiedRuns] = useState(true)
+  const [evidenceQueue, setEvidenceQueue] = useState<EvidenceReviewRow[]>([])
+  const [reviewOpen, setReviewOpen] = useState<EvidenceReviewRow | null>(null)
+  const [reviewUrls, setReviewUrls] = useState<string[]>([])
+  const [reviewNote, setReviewNote] = useState('')
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewError, setReviewError] = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -378,10 +386,45 @@ function LeaguesPage() {
     return () => { active = false; window.clearInterval(timer) }
   }, [getLeagueTable, selectedLeague])
 
+  useEffect(() => {
+    if (!selectedLeague || selectedLeague.role !== 'owner') return
+    let active = true
+    void getEvidenceQueue(selectedLeague.id)
+      .then((rows) => { if (active) setEvidenceQueue(rows) })
+      .catch(() => { if (active) setReviewError('Could not load the private review queue.') })
+    return () => { active = false }
+  }, [getEvidenceQueue, selectedLeague])
+
+  const openReview = async (entry: EvidenceReviewRow) => {
+    setReviewError('')
+    setReviewOpen(entry)
+    setReviewUrls([])
+    setReviewNote(entry.reviewNote)
+    try {
+      const urls = await getEvidenceLinks(entry.screenshotPaths)
+      setReviewUrls(urls)
+    } catch (caught) {
+      setReviewError(caught instanceof Error ? caught.message : 'Could not open the private screenshots.')
+    }
+  }
+  const decideReview = async (decision: 'approved' | 'rejected') => {
+    if (!reviewOpen || !selectedLeague) return
+    setReviewBusy(true); setReviewError('')
+    try {
+      await reviewEvidence(reviewOpen.id, decision, reviewNote)
+      const [rows, latestTable] = await Promise.all([
+        getEvidenceQueue(selectedLeague.id), getLeagueTable(selectedLeague.id),
+      ])
+      setEvidenceQueue(rows); setTable(latestTable); setReviewOpen(null); setReviewUrls([])
+    } catch (caught) {
+      setReviewError(caught instanceof Error ? caught.message : 'Review could not be saved.')
+    } finally { setReviewBusy(false) }
+  }
+
   const submitCreate = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError('')
     try {
-      const league = await createLeague({ name, description, seasonWeeks, runsPerWeek })
+      const league = await createLeague({ name, description, seasonWeeks, runsPerWeek, requireVerifiedRuns })
       setSelectedId(league.id); setModal(null); setName(''); setDescription('')
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'The league could not be created.') } finally { setBusy(false) }
   }
@@ -399,7 +442,7 @@ function LeaguesPage() {
     {error && !modal && <div className="notice error" role="alert">{error}</div>}{leagues.length ? <div className="league-cards">{leagues.map((league, index) => <article className={league.id === selectedLeague?.id ? 'league-card active' : 'league-card'} key={league.id}><div className={index % 2 ? 'league-card-cover violet' : 'league-card-cover'}><Trophy /><span>{league.role === 'owner' ? 'YOU CREATED THIS' : 'MEMBER'}</span></div><div><h3>{league.name}</h3><p>{league.memberCount} {league.memberCount === 1 ? 'runner' : 'runners'} · {league.seasonWeeks}-week season</p><div className="season-progress"><span style={{ width: `${Math.min(100, Math.max(0, (openedAt - new Date(league.createdAt).getTime()) / (league.seasonWeeks * 7 * 86400000) * 100))}%` }} /></div><footer><span><strong>{league.runsPerWeek}</strong><small>Runs per week</small></span><span><strong>{league.code}</strong><small>Invite code</small></span><button onClick={() => setSelectedId(league.id)}>Open league <ArrowRight size={16} /></button></footer></div></article>)}</div> : <section className="panel"><EmptyState title="Start your first league" text="Create a private league for friends, colleagues or clubmates—or join one using an invite code." action="Create a league" onAction={() => setModal('create')} /></section>}
     {selectedLeague && <><section className="league-invite panel"><div><span className="eyebrow">INVITE RUNNERS</span><h3>{selectedLeague.name}</h3><p>Share this private code. New members can enter it from their Leagues page.</p></div><button onClick={copyCode}><strong>{selectedLeague.code}</strong><span>{copied ? 'Copied' : 'Copy code'} <Copy size={15} /></span></button></section>
     <section className="panel full-table"><header className="panel-header"><div><span className="eyebrow">LIVE TABLE</span><h3>{selectedLeague.name}</h3></div><div className="table-toggle"><button className={tableMode === 'week' ? 'active' : ''} onClick={() => setTableMode('week')}>This week</button><button className={tableMode === 'season' ? 'active' : ''} onClick={() => setTableMode('season')}>Season</button></div></header>{sortedTable.length ? <><div className="table-head"><span>POS</span><span>RUNNER</span><span>RUNS</span><span>WEEK</span><span>SEASON</span></div>{sortedTable.map((member, index) => <div className={member.userId === user?.id || member.name === user?.name ? 'table-member current' : 'table-member'} key={member.userId}><b>{index + 1}</b><span><Avatar initials={member.initials} colour={member.userId === user?.id ? '#1646d8' : '#6370a7'} size="small" /><strong>{member.name}</strong>{member.userId === user?.id && <small>YOU</small>}</span><em>{member.runs}/{selectedLeague.runsPerWeek}</em><strong>{member.weeklyPoints}</strong><strong>{member.seasonPoints}</strong></div>)}</> : <EmptyState title="The table is ready" text="Scores will appear as league members add activities." />}</section>
-    <section className="rules-panel"><ShieldCheck /><div><h3>League rules</h3><p>Best {selectedLeague.runsPerWeek} runs each week · Maximum {leagueRules.maximumScoringRunsPerDay} scoring run per day · {selectedLeague.seasonWeeks}-week season · Best {Math.max(1, selectedLeague.seasonWeeks - 2)} weeks count · Monday–Sunday, UK time.</p></div></section></>}
+    <section className="rules-panel"><ShieldCheck /><div><h3>League rules</h3><p>Best {selectedLeague.runsPerWeek} runs each week · Maximum {leagueRules.maximumScoringRunsPerDay} scoring run per day · {selectedLeague.seasonWeeks}-week season · Best {Math.max(1, selectedLeague.seasonWeeks - 2)} weeks count · Monday–Sunday, UK time. {selectedLeague.requireVerifiedRuns ? 'Only organiser-approved evidence earns league points. Manual, FIT and GPX entries without approved proof stay in history but do not count.' : 'Evidence review is optional in this league.'}</p></div></section></>}
     {modal === 'create' && <Modal title="Create a private league" onClose={() => setModal(null)}><form className="modal-form" onSubmit={submitCreate}><label>League name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Sunday Miles" minLength={2} maxLength={80} required autoFocus /></label><label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What brings this group together?" /></label><div className="form-grid two"><label>Season length<select value={seasonWeeks} onChange={(event) => setSeasonWeeks(Number(event.target.value))}>{[4, 6, 8, 10, 12, 16].map((value) => <option value={value} key={value}>{value} weeks</option>)}</select></label><label>Scoring runs<select value={runsPerWeek} onChange={(event) => setRunsPerWeek(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>{value} per week</option>)}</select></label></div>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Creating…' : 'Create league'} <ArrowRight size={17} /></button></form></Modal>}
     {modal === 'join' && <Modal title="Join a league" onClose={() => setModal(null)}><form className="modal-form" onSubmit={submitJoin}><p>Ask the league organiser for their 12-character invite code.</p><label>Invite code<input className="code-input" value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase())} placeholder="A1B2C3D4E5F6" minLength={7} maxLength={12} required autoFocus /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Joining…' : 'Join league'} <ArrowRight size={17} /></button></form></Modal>}
   </div>
