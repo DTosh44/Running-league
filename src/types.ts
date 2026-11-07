@@ -77,6 +77,7 @@ export type League = {
   memberCount: number
   role: 'owner' | 'member'
   createdAt: string
+  requireVerifiedRuns?: boolean
 }
 
 export type LeagueTableEntry = {
@@ -92,4 +93,29 @@ export type UserPreferences = {
   weeklyEmail: boolean
   leagueNotifications: boolean
   publicProfile: boolean
+}
+
+
+export type EvidenceStatus = {
+  activityId: string
+  leagueId: string
+  status: 'pending' | 'approved' | 'rejected'
+  flags: string[]
+}
+
+export type EvidenceReviewRow = {
+  id: string
+  activityId: string
+  runnerId: string
+  runnerName: string
+  runName: string
+  occurredAt: string
+  distanceKm: number
+  elevationM: number
+  elapsedSeconds: number
+  status: 'pending' | 'approved' | 'rejected'
+  flags: string[]
+  screenshotPaths: string[]
+  reviewNote: string
+  createdAt: string
 }
