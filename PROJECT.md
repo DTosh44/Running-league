@@ -1,6 +1,6 @@
 # Running League — project status
 
-Last reviewed: 1 October 2026
+Last reviewed: 7 November 2026
 
 ## Purpose
 
