@@ -328,10 +328,11 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       await refresh()
     },
     async getEvidenceLinks(paths) {
-      if (!supabase) throw new Error('Private evidence requires a live account.')
+      const client = supabase
+      if (!client) throw new Error('Private evidence requires a live account.')
       if (paths.length < 1 || paths.length > 2) throw new Error('Invalid evidence file list.')
       const urls = await Promise.all(paths.map(async (path) => {
-        const { data, error } = await supabase.storage.from('run-evidence').createSignedUrl(path, 180)
+        const { data, error } = await client.storage.from('run-evidence').createSignedUrl(path, 180)
         if (error || !data?.signedUrl) throw new Error('This screenshot is not available to your account.')
         return data.signedUrl
       }))
