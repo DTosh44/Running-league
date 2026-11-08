@@ -1,6 +1,6 @@
 # Running League — project status
 
-Last reviewed: 7 November 2026
+Last reviewed: 8 November 2026
 
 ## Purpose
 
@@ -32,14 +32,23 @@ Production beta: `https://running-league-alpha.vercel.app/`
 
 The deployed environment is not yet ready for broad public signup.
 
-## Friends-only screenshot pilot
+## Friends-only verified-screenshot league pilot (PR #3 — DRAFT, NOT LIVE)
 
-- Strava screenshot importer implemented with automated lint/tests/build passing. Verify the main-branch Vercel deployment and real screenshot behaviour before inviting friends.
-- Free browser-based Tesseract.js OCR, with confirmation of distance, elevation, date and **elapsed** time before saving; screenshot image is not retained.
-- No paid Strava credentials, backend OCR usage, database schema change or RunningScore v1.0 changes needed.
-- Screenshots are recorded using the existing Manual database source plus a screenshot-prefixed external ID. The frontend displays the screenshot origin; exact duplicate submissions get a uniqueness check. This is not a fraud-proof verification system.
-- Review and test on actual UK Strava screenshot layouts, iPhone/Android browsers, and two separate real league accounts before release.
-- SMTP/email onboarding remains a separate launch blocker. This feature does not make the app ready for friends to sign up by itself.
+- Introduces one- or two-image Strava proof with browser-local OCR, cross-screen discrepancies, possible duplicate flags and manual confirmation of **elapsed time**. Original screenshots are uploaded to a **private Supabase Storage bucket**, unlike the earlier importer that did not retain screenshots.
+- Runners choose a league. Submitted screenshots and captured metrics go into a **pending** review queue. The organiser can see only evidence belonging to the exact league they created, through 3-minute signed image URLs, and can approve/reject with notes. Screenshot URLs are not public.
+- New leagues default to selecting **Require verified run evidence**. In these leagues, server-side league_table includes only activities with approved evidence for that league, regardless of how someone entered the activity. Existing leagues default to unchanged rules. A verified league cannot downgrade verification, and evidenced activity metrics are locked from edits.
+- RunningScore v1.0 **has not changed**. Individual run scores are still calculated; strict league ranking treats pending, rejected and unverified runs as ineligible.
+- All new features are committed in feature/verified-screenshot-leagues and draft PR #3; tests/lint/build/API typecheck succeeded on the branch. **No private evidence migration has been applied to production**. The Supabase connector denied permission to modify the live project, so this PR must NOT be merged yet.
+- Retained images contain potentially sensitive routes/location and take Storage space. Free only within plan quotas. Screenshot evidence remains human-verifiable but is **not cheat-proof**. No direct Strava/Garmin API or paid AI integration is active.
+
+### Release blockers
+
+1. Review and apply supabase/verified-screenshot-leagues.sql in a non-production environment, test activity evidence and Storage RLS for owner, member, other league creator and nonmember.
+2. Run supabase/tests/verified-evidence-security.sql and real bucket upload / signed-link / delete tests.
+3. Gain authorised access and apply database changes to the live Supabase project before merging PR #3; verify rollback/recovery plan.
+4. Test two real accounts end-to-end and finish production SMTP email confirmation/recovery setup.
+5. Test original Strava screenshots from different phones and layouts, along with actual organiser approval/rejection and live league-table eligibility.
+6. Only then merge and verify Vercel production deployment.
 
 ## Current milestone
 

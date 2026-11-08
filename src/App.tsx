@@ -37,11 +37,12 @@ import { demoCredentials, useAuth } from './auth'
 import { leagueMembers } from './data'
 import { importActivityFile } from './activity-import'
 import { formatScreenshotTime, readStravaScreenshot } from './screenshot-import'
+import { reconcileScreenshots, validateEvidenceFiles } from './verified-evidence'
 import { usePlatform } from './platform'
 import { supabase } from './supabase'
 import { defaultPlanAnswers, generateTrainingPlan, parseDuration, weekdays } from './planner'
 import { formatPace, leagueRules, scoringConfig, scoringVersion } from './scoring'
-import type { ActivityRecord, LeagueTableEntry, PlanAnswers, TrainingPlan } from './types'
+import type { ActivityRecord, EvidenceReviewRow, LeagueTableEntry, PlanAnswers, TrainingPlan } from './types'
 
 export function navigate(path: string) {
   window.history.pushState({}, '', path)
@@ -330,30 +331,35 @@ function ActivityRow({ activity, onOpen }: { activity: ActivityRecord; onOpen?: 
 
 function DashboardPage() {
   const { user } = useAuth()
-  const { activities, leagues, plan } = usePlatform()
-  const scoringRuns = weeklyScoringRuns(activities, leagueRules.scoringRunsPerWeek)
+  const { activities, leagues, evidenceStatuses, plan } = usePlatform()
+  const primaryLeague = leagues.find((league) => league.requireVerifiedRuns) ?? leagues[0]
+  const eligibleRuns = primaryLeague?.requireVerifiedRuns
+    ? activities.filter((activity) => evidenceStatuses.some((item) =>
+        item.activityId === activity.id && item.leagueId === primaryLeague.id && item.status === 'approved'))
+    : activities
+  const scoringRuns = weeklyScoringRuns(eligibleRuns, primaryLeague?.runsPerWeek ?? leagueRules.scoringRunsPerWeek)
   const weeklyScore = scoringRuns.reduce((sum, run) => sum + run.score.points, 0)
   const bestRun = scoringRuns[0]
   return <div className="app-page dashboard-page">
     <div className="welcome-row"><div><span className="eyebrow">YOUR RUNNING WEEK</span><h2>Welcome, {user?.name.split(' ')[0]}.</h2><p>{leagues.length ? 'One strong run could change your league position this week.' : 'Add a run or create a league to get started.'}</p></div><button className="button button-primary" onClick={() => navigate('/app/activities')}><Upload size={17} /> Add an activity</button></div>
     <div className="stats-grid">
-      <StatCard label="Weekly score" value={`${weeklyScore} pts`} detail={`${scoringRuns.length} of ${leagueRules.scoringRunsPerWeek} scoring runs`} icon={<Gauge />} />
+      <StatCard label="Weekly score" value={`${weeklyScore} pts`} detail={`${scoringRuns.length} approved of ${primaryLeague?.runsPerWeek ?? leagueRules.scoringRunsPerWeek} scoring runs`} icon={<Gauge />} />
       <StatCard label="Leagues" value={String(leagues.length)} detail={leagues.length ? 'Private leagues joined' : 'Create or join your first'} icon={<Trophy />} />
       <StatCard label="Activities" value={String(activities.length)} detail="Runs in your history" icon={<Activity />} />
       <StatCard label="Race plan" value={plan ? plan.answers.raceDistance : 'Not set'} detail={plan ? `${plan.weeks.length} weeks · target ${plan.answers.targetTime}` : 'Build a plan around your week'} icon={<Target />} />
     </div>
     <div className="dashboard-grid">
-      <section className="panel weekly-panel"><header className="panel-header"><div><span className="eyebrow">YOUR WEEK</span><h3>Scoring runs</h3></div><button onClick={() => navigate('/app/activities')}>All activities <ArrowRight size={15} /></button></header>{bestRun ? <><div className="weekly-score-line"><ScoreDisc score={bestRun.score.points} size="large" /><div><span>Your best score</span><strong>{bestRun.score.band}</strong><small>{bestRun.name}{bestRun.score.intervalUplift ? ` · +${bestRun.score.intervalUplift} interval uplift` : ''}</small></div><div className="run-slots">{Array.from({ length: leagueRules.scoringRunsPerWeek }, (_, index) => <span className={index < scoringRuns.length ? 'filled' : ''} key={index}>{index < scoringRuns.length && <Check size={14} />} {index + 1}</span>)}</div></div>{scoringRuns.map((activity) => <ActivityRow activity={activity} key={activity.id} onOpen={() => navigate('/app/activities')} />)}</> : <EmptyState title="No runs yet" text="Add a run manually or import a GPX/FIT file to calculate your first score." action="Add an activity" onAction={() => navigate('/app/activities')} />}</section>
-      <section className="panel league-panel"><header className="panel-header"><div><span className="eyebrow">PRIVATE LEAGUES</span><h3>{leagues[0]?.name ?? 'Your league table'}</h3></div><button onClick={() => navigate('/app/leagues')}>Open leagues <ArrowRight size={15} /></button></header>{leagues.length ? <><div className="leaderboard-list">{user && <div className="leaderboard-row current"><b>—</b><Avatar initials={user.initials} colour="#1646d8" size="small" /><span><strong>{user.name}</strong><small>{scoringRuns.length}/{leagueRules.scoringRunsPerWeek} runs</small></span><em>{weeklyScore}</em></div>}</div><div className="league-deadline"><Clock3 size={17} /><span><strong>Weekly scoring</strong><small>Your best {leagueRules.scoringRunsPerWeek} runs count</small></span></div></> : <EmptyState title="No leagues yet" text="Create a private league or join one with an invite code." action="Go to leagues" onAction={() => navigate('/app/leagues')} />}</section>
+      <section className="panel weekly-panel"><header className="panel-header"><div><span className="eyebrow">YOUR WEEK</span><h3>Scoring runs</h3></div><button onClick={() => navigate('/app/activities')}>All activities <ArrowRight size={15} /></button></header>{bestRun ? <><div className="weekly-score-line"><ScoreDisc score={bestRun.score.points} size="large" /><div><span>Your best score</span><strong>{bestRun.score.band}</strong><small>{bestRun.name}{bestRun.score.intervalUplift ? ` · +${bestRun.score.intervalUplift} interval uplift` : ''}</small></div><div className="run-slots">{Array.from({ length: leagueRules.scoringRunsPerWeek }, (_, index) => <span className={index < scoringRuns.length ? 'filled' : ''} key={index}>{index < scoringRuns.length && <Check size={14} />} {index + 1}</span>)}</div></div>{scoringRuns.map((activity) => <ActivityRow activity={activity} key={activity.id} onOpen={() => navigate('/app/activities')} />)}</> : <EmptyState title="No eligible runs yet" text={primaryLeague?.requireVerifiedRuns ? 'Upload Strava screenshot evidence. Points appear after the organiser approves your run.' : 'Add a run or import a GPX/FIT file to calculate your first score.'} action="Add an activity" onAction={() => navigate('/app/activities')} />}</section>
+      <section className="panel league-panel"><header className="panel-header"><div><span className="eyebrow">PRIVATE LEAGUES</span><h3>{primaryLeague?.name ?? 'Your league table'}</h3></div><button onClick={() => navigate('/app/leagues')}>Open leagues <ArrowRight size={15} /></button></header>{leagues.length ? <><div className="leaderboard-list">{user && <div className="leaderboard-row current"><b>—</b><Avatar initials={user.initials} colour="#1646d8" size="small" /><span><strong>{user.name}</strong><small>{scoringRuns.length}/{primaryLeague?.runsPerWeek ?? leagueRules.scoringRunsPerWeek} runs</small></span><em>{weeklyScore}</em></div>}</div><div className="league-deadline"><Clock3 size={17} /><span><strong>Weekly scoring</strong><small>{primaryLeague?.requireVerifiedRuns ? 'Only organiser-approved runs count' : 'Your best ' + leagueRules.scoringRunsPerWeek + ' runs count'}</small></span></div></> : <EmptyState title="No leagues yet" text="Create a private league or join one with an invite code." action="Go to leagues" onAction={() => navigate('/app/leagues')} />}</section>
       <section className="panel plan-prompt"><div><span className="feature-icon"><CalendarCheck /></span><span className="eyebrow">RACE READY</span><h3>Build a plan that works on your days.</h3><p>Choose your distance, target and available days. We’ll shape the weeks for you.</p><button className="button button-primary" onClick={() => navigate('/app/plan')}>Create my plan <ArrowRight size={17} /></button></div><div className="mini-calendar"><span>M</span><span className="run">T<i>6k</i></span><span>W</span><span className="run">T<i>8k</i></span><span>F</span><span>S</span><span className="run long">S<i>12k</i></span></div></section>
-      <section className="panel feed-panel"><header className="panel-header"><div><span className="eyebrow">THE CLUBHOUSE</span><h3>Recent activity</h3></div></header>{activities.length ? activities.slice(0, 3).map((activity) => <div className="feed-row" key={activity.id}><Avatar initials={user?.initials ?? 'RL'} colour="#1646d8" size="small" /><span><strong>{user?.name}</strong> scored {activity.score.points} on {activity.name}<small>{activity.date}</small></span></div>) : <EmptyState title="Nothing here yet" text="Your league activity will appear after runs are added." />}</section>
+      <section className="panel feed-panel"><header className="panel-header"><div><span className="eyebrow">THE CLUBHOUSE</span><h3>Recent activity</h3></div></header>{activities.length ? activities.slice(0, 3).map((activity) => <div className="feed-row" key={activity.id}><Avatar initials={user?.initials ?? 'RL'} colour="#1646d8" size="small" /><span><strong>{user?.name}</strong> recorded a calculated score of {activity.score.points} for {activity.name}<small>{activity.date}</small></span></div>) : <EmptyState title="Nothing here yet" text="Your league activity will appear after runs are added." />}</section>
     </div>
   </div>
 }
 
 function LeaguesPage() {
   const { user } = useAuth()
-  const { leagues, createLeague, joinLeague, getLeagueTable } = usePlatform()
+  const { leagues, createLeague, joinLeague, getLeagueTable, getEvidenceQueue, reviewEvidence, getEvidenceLinks } = usePlatform()
   const [modal, setModal] = useState<'create' | 'join' | null>(null)
   const [selectedId, setSelectedId] = useState('')
   const [table, setTable] = useState<LeagueTableEntry[]>([])
@@ -363,6 +369,13 @@ function LeaguesPage() {
   const [description, setDescription] = useState('')
   const [seasonWeeks, setSeasonWeeks] = useState(10)
   const [runsPerWeek, setRunsPerWeek] = useState(3)
+  const [requireVerifiedRuns, setRequireVerifiedRuns] = useState(true)
+  const [evidenceQueue, setEvidenceQueue] = useState<EvidenceReviewRow[]>([])
+  const [reviewOpen, setReviewOpen] = useState<EvidenceReviewRow | null>(null)
+  const [reviewUrls, setReviewUrls] = useState<string[]>([])
+  const [reviewNote, setReviewNote] = useState('')
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewError, setReviewError] = useState('')
   const [joinCode, setJoinCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -378,10 +391,45 @@ function LeaguesPage() {
     return () => { active = false; window.clearInterval(timer) }
   }, [getLeagueTable, selectedLeague])
 
+  useEffect(() => {
+    if (!selectedLeague || selectedLeague.role !== 'owner') return
+    let active = true
+    void getEvidenceQueue(selectedLeague.id)
+      .then((rows) => { if (active) setEvidenceQueue(rows) })
+      .catch(() => { if (active) setReviewError('Could not load the private review queue.') })
+    return () => { active = false }
+  }, [getEvidenceQueue, selectedLeague])
+
+  const openReview = async (entry: EvidenceReviewRow) => {
+    setReviewError('')
+    setReviewOpen(entry)
+    setReviewUrls([])
+    setReviewNote(entry.reviewNote)
+    try {
+      const urls = await getEvidenceLinks(entry.screenshotPaths)
+      setReviewUrls(urls)
+    } catch (caught) {
+      setReviewError(caught instanceof Error ? caught.message : 'Could not open the private screenshots.')
+    }
+  }
+  const decideReview = async (decision: 'approved' | 'rejected') => {
+    if (!reviewOpen || !selectedLeague) return
+    setReviewBusy(true); setReviewError('')
+    try {
+      await reviewEvidence(reviewOpen.id, decision, reviewNote)
+      const [rows, latestTable] = await Promise.all([
+        getEvidenceQueue(selectedLeague.id), getLeagueTable(selectedLeague.id),
+      ])
+      setEvidenceQueue(rows); setTable(latestTable); setReviewOpen(null); setReviewUrls([])
+    } catch (caught) {
+      setReviewError(caught instanceof Error ? caught.message : 'Review could not be saved.')
+    } finally { setReviewBusy(false) }
+  }
+
   const submitCreate = async (event: FormEvent) => {
     event.preventDefault(); setBusy(true); setError('')
     try {
-      const league = await createLeague({ name, description, seasonWeeks, runsPerWeek })
+      const league = await createLeague({ name, description, seasonWeeks, runsPerWeek, requireVerifiedRuns })
       setSelectedId(league.id); setModal(null); setName(''); setDescription('')
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'The league could not be created.') } finally { setBusy(false) }
   }
@@ -396,11 +444,36 @@ function LeaguesPage() {
 
   const sortedTable = [...table].sort((a, b) => tableMode === 'week' ? b.weeklyPoints - a.weeklyPoints : b.seasonPoints - a.seasonPoints)
   return <div className="app-page"><div className="page-intro"><div><span className="eyebrow">PRIVATE LEAGUES</span><h2>Run with your people.</h2><p>Everyone gets the same weekly run allowance. The best scores decide the table.</p></div><div className="page-actions"><button className="button button-outline" onClick={() => { setError(''); setModal('join') }}><UserPlus size={17} /> Join with code</button><button className="button button-primary" onClick={() => { setError(''); setModal('create') }}><Plus size={17} /> Create a league</button></div></div>
-    {error && !modal && <div className="notice error" role="alert">{error}</div>}{leagues.length ? <div className="league-cards">{leagues.map((league, index) => <article className={league.id === selectedLeague?.id ? 'league-card active' : 'league-card'} key={league.id}><div className={index % 2 ? 'league-card-cover violet' : 'league-card-cover'}><Trophy /><span>{league.role === 'owner' ? 'YOU CREATED THIS' : 'MEMBER'}</span></div><div><h3>{league.name}</h3><p>{league.memberCount} {league.memberCount === 1 ? 'runner' : 'runners'} · {league.seasonWeeks}-week season</p><div className="season-progress"><span style={{ width: `${Math.min(100, Math.max(0, (openedAt - new Date(league.createdAt).getTime()) / (league.seasonWeeks * 7 * 86400000) * 100))}%` }} /></div><footer><span><strong>{league.runsPerWeek}</strong><small>Runs per week</small></span><span><strong>{league.code}</strong><small>Invite code</small></span><button onClick={() => setSelectedId(league.id)}>Open league <ArrowRight size={16} /></button></footer></div></article>)}</div> : <section className="panel"><EmptyState title="Start your first league" text="Create a private league for friends, colleagues or clubmates—or join one using an invite code." action="Create a league" onAction={() => setModal('create')} /></section>}
+    {error && !modal && <div className="notice error" role="alert">{error}</div>}{leagues.length ? <div className="league-cards">{leagues.map((league, index) => <article className={league.id === selectedLeague?.id ? 'league-card active' : 'league-card'} key={league.id}><div className={index % 2 ? 'league-card-cover violet' : 'league-card-cover'}><Trophy /><span>{league.role === 'owner' ? 'YOU CREATED THIS' : 'MEMBER'}</span></div><div><h3>{league.name}</h3><p>{league.memberCount} {league.memberCount === 1 ? 'runner' : 'runners'} · {league.seasonWeeks}-week season</p><div className="season-progress"><span style={{ width: `${Math.min(100, Math.max(0, (openedAt - new Date(league.createdAt).getTime()) / (league.seasonWeeks * 7 * 86400000) * 100))}%` }} /></div><footer><span><strong>{league.runsPerWeek}</strong><small>Runs per week</small></span><span><strong>{league.code}</strong><small>Invite code</small></span><button onClick={() => { setSelectedId(league.id); setEvidenceQueue([]); setReviewError('') }}>Open league <ArrowRight size={16} /></button></footer></div></article>)}</div> : <section className="panel"><EmptyState title="Start your first league" text="Create a private league for friends, colleagues or clubmates—or join one using an invite code." action="Create a league" onAction={() => setModal('create')} /></section>}
     {selectedLeague && <><section className="league-invite panel"><div><span className="eyebrow">INVITE RUNNERS</span><h3>{selectedLeague.name}</h3><p>Share this private code. New members can enter it from their Leagues page.</p></div><button onClick={copyCode}><strong>{selectedLeague.code}</strong><span>{copied ? 'Copied' : 'Copy code'} <Copy size={15} /></span></button></section>
     <section className="panel full-table"><header className="panel-header"><div><span className="eyebrow">LIVE TABLE</span><h3>{selectedLeague.name}</h3></div><div className="table-toggle"><button className={tableMode === 'week' ? 'active' : ''} onClick={() => setTableMode('week')}>This week</button><button className={tableMode === 'season' ? 'active' : ''} onClick={() => setTableMode('season')}>Season</button></div></header>{sortedTable.length ? <><div className="table-head"><span>POS</span><span>RUNNER</span><span>RUNS</span><span>WEEK</span><span>SEASON</span></div>{sortedTable.map((member, index) => <div className={member.userId === user?.id || member.name === user?.name ? 'table-member current' : 'table-member'} key={member.userId}><b>{index + 1}</b><span><Avatar initials={member.initials} colour={member.userId === user?.id ? '#1646d8' : '#6370a7'} size="small" /><strong>{member.name}</strong>{member.userId === user?.id && <small>YOU</small>}</span><em>{member.runs}/{selectedLeague.runsPerWeek}</em><strong>{member.weeklyPoints}</strong><strong>{member.seasonPoints}</strong></div>)}</> : <EmptyState title="The table is ready" text="Scores will appear as league members add activities." />}</section>
-    <section className="rules-panel"><ShieldCheck /><div><h3>League rules</h3><p>Best {selectedLeague.runsPerWeek} runs each week · Maximum {leagueRules.maximumScoringRunsPerDay} scoring run per day · {selectedLeague.seasonWeeks}-week season · Best {Math.max(1, selectedLeague.seasonWeeks - 2)} weeks count · Monday–Sunday, UK time.</p></div></section></>}
-    {modal === 'create' && <Modal title="Create a private league" onClose={() => setModal(null)}><form className="modal-form" onSubmit={submitCreate}><label>League name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Sunday Miles" minLength={2} maxLength={80} required autoFocus /></label><label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What brings this group together?" /></label><div className="form-grid two"><label>Season length<select value={seasonWeeks} onChange={(event) => setSeasonWeeks(Number(event.target.value))}>{[4, 6, 8, 10, 12, 16].map((value) => <option value={value} key={value}>{value} weeks</option>)}</select></label><label>Scoring runs<select value={runsPerWeek} onChange={(event) => setRunsPerWeek(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>{value} per week</option>)}</select></label></div>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Creating…' : 'Create league'} <ArrowRight size={17} /></button></form></Modal>}
+    <section className="rules-panel"><ShieldCheck /><div><h3>League rules</h3><p>Best {selectedLeague.runsPerWeek} runs each week · Maximum {leagueRules.maximumScoringRunsPerDay} scoring run per day · {selectedLeague.seasonWeeks}-week season · Best {Math.max(1, selectedLeague.seasonWeeks - 2)} weeks count · Monday–Sunday, UK time. {selectedLeague.requireVerifiedRuns ? 'Only organiser-approved evidence earns league points. Manual, FIT and GPX entries without approved proof stay in history but do not count.' : 'Evidence review is optional in this league.'}</p></div></section></>}
+    {selectedLeague?.role === 'owner' && <section className="panel evidence-review-panel">
+      <header className="panel-header"><div><span className="eyebrow">PRIVATE ORGANISER TOOLS</span><h3>Screenshot evidence review</h3><p>Original screenshots are visible only to the runner and this league's organiser. Approve only when the elapsed time and run details match the images.</p></div></header>
+      {reviewError && !reviewOpen && <div className="notice error" role="alert">{reviewError}</div>}
+      {evidenceQueue.length ? <div className="evidence-review-list">{evidenceQueue.map((entry) => <div className="evidence-review-item" key={entry.id}>
+        <div><strong>{entry.runnerName} — {entry.runName}</strong><small>{new Date(entry.occurredAt).toLocaleString('en-GB')} · {entry.distanceKm} km · elapsed {formatScreenshotTime(entry.elapsedSeconds)}</small>
+          <span className={'evidence-review-status evidence-' + entry.status}>{entry.status === 'pending' ? 'Awaiting approval' : entry.status}</span>
+          {entry.flags.length > 0 && <small className="evidence-flags">Check: {entry.flags.join('; ')}</small>}
+        </div>
+        <button className="button button-outline button-small" onClick={() => void openReview(entry)}>View evidence</button>
+      </div>)}</div> : <p className="evidence-empty">No submitted screenshots to review yet.</p>}
+    </section>}
+    {reviewOpen && <Modal title="Private screenshot review" onClose={() => { if (!reviewBusy) { setReviewOpen(null); setReviewError('') } }}>
+      <div className="evidence-review-detail">
+        <strong>{reviewOpen.runnerName} — {reviewOpen.runName}</strong>
+        <p>{new Date(reviewOpen.occurredAt).toLocaleString('en-GB')} · {reviewOpen.distanceKm} km · {reviewOpen.elevationM} m climbing · elapsed {formatScreenshotTime(reviewOpen.elapsedSeconds)}</p>
+        {reviewOpen.flags.length > 0 && <p className="evidence-flags">Flags to check: {reviewOpen.flags.join('; ')}</p>}
+        {reviewUrls.length ? <div className="evidence-photos">{reviewUrls.map((url, index) =>
+          <a href={url} target="_blank" rel="noopener noreferrer" key={url}><img src={url} alt={'Original private Strava screenshot ' + (index + 1)} /><span>Open original screenshot {index + 1}</span></a>
+        )}</div> : <p>Loading private images…</p>}
+        <label>Review note (optional)<textarea value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} maxLength={400} placeholder="Explain a rejection or record a correction." /></label>
+        {reviewError && <div className="notice error" role="alert">{reviewError}</div>}
+        <p>OCR alone cannot prove that a run or its time is genuine. Check the images against the submitted run.</p>
+        <div className="evidence-review-actions"><button className="button button-outline" disabled={reviewBusy || !reviewUrls.length} onClick={() => void decideReview('rejected')}>Reject run</button><button className="button button-primary" disabled={reviewBusy || !reviewUrls.length} onClick={() => void decideReview('approved')}>{reviewBusy ? 'Saving…' : 'Approve for league points'}</button></div>
+      </div>
+    </Modal>}
+    {modal === 'create' && <Modal title="Create a private league" onClose={() => setModal(null)}><form className="modal-form" onSubmit={submitCreate}><label>League name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Sunday Miles" minLength={2} maxLength={80} required autoFocus /></label><label>Description<textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What brings this group together?" /></label><div className="form-grid two"><label>Season length<select value={seasonWeeks} onChange={(event) => setSeasonWeeks(Number(event.target.value))}>{[4, 6, 8, 10, 12, 16].map((value) => <option value={value} key={value}>{value} weeks</option>)}</select></label><label>Scoring runs<select value={runsPerWeek} onChange={(event) => setRunsPerWeek(Number(event.target.value))}>{[1, 2, 3, 4, 5].map((value) => <option value={value} key={value}>{value} per week</option>)}</select></label></div><label className="toggle-row"><span><strong>Require verified run evidence</strong><small>Recommended: 1–2 private Strava screenshots showing elapsed time. Only organiser-approved runs score. Existing leagues are unchanged.</small></span><input type="checkbox" checked={requireVerifiedRuns} onChange={(event) => setRequireVerifiedRuns(event.target.checked)} /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Creating…' : 'Create league'} <ArrowRight size={17} /></button></form></Modal>}
     {modal === 'join' && <Modal title="Join a league" onClose={() => setModal(null)}><form className="modal-form" onSubmit={submitJoin}><p>Ask the league organiser for their 12-character invite code.</p><label>Invite code<input className="code-input" value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase())} placeholder="A1B2C3D4E5F6" minLength={7} maxLength={12} required autoFocus /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Joining…' : 'Join league'} <ArrowRight size={17} /></button></form></Modal>}
   </div>
 }
@@ -411,7 +484,7 @@ function ScoreBreakdown({ activity }: { activity: ActivityRecord }) {
 }
 
 function ActivitiesPage() {
-  const { activities, addActivity } = usePlatform()
+  const { activities, leagues, evidenceStatuses, addActivity, submitScreenshotEvidence } = usePlatform()
   const [selectedId, setSelectedId] = useState(activities[0]?.id ?? '')
   const [filter, setFilter] = useState<'all' | 'scoring' | 'training'>('all')
   const [modal, setModal] = useState(false)
@@ -427,11 +500,16 @@ function ActivitiesPage() {
   const [message, setMessage] = useState('')
   const filePicker = useRef<HTMLInputElement>(null)
   const screenshotPicker = useRef<HTMLInputElement>(null)
+  const screenshotExtraPicker = useRef<HTMLInputElement>(null)
   const [screenshotModal, setScreenshotModal] = useState(false)
   const [screenshotReading, setScreenshotReading] = useState(false)
   const [screenshotSaving, setScreenshotSaving] = useState(false)
   const [screenshotProgress, setScreenshotProgress] = useState(0)
-  const [screenshotPreview, setScreenshotPreview] = useState('')
+  const [screenshotFiles, setScreenshotFiles] = useState<File[]>([])
+  const [screenshotPreviews, setScreenshotPreviews] = useState<string[]>([])
+  const [screenshotWarnings, setScreenshotWarnings] = useState<string[]>([])
+  const [screenshotDetectedElapsed, setScreenshotDetectedElapsed] = useState<number | null>(null)
+  const [screenshotLeagueId, setScreenshotLeagueId] = useState('')
   const [screenshotError, setScreenshotError] = useState('')
   const [screenshotHint, setScreenshotHint] = useState('')
   const [screenshotName, setScreenshotName] = useState('Strava run')
@@ -443,9 +521,16 @@ function ActivitiesPage() {
   const [screenshotElapsedConfirmed, setScreenshotElapsedConfirmed] = useState(false)
   const [screenshotTraining, setScreenshotTraining] = useState(false)
   useEffect(() => () => {
-    if (screenshotPreview && typeof URL.revokeObjectURL === 'function') URL.revokeObjectURL(screenshotPreview)
-  }, [screenshotPreview])
-  const scoringIds = useMemo(() => new Set(weeklyScoringRuns(activities, leagueRules.scoringRunsPerWeek).map((activity) => activity.id)), [activities])
+    if (typeof URL.revokeObjectURL === 'function') {
+      screenshotPreviews.forEach((url) => URL.revokeObjectURL(url))
+    }
+  }, [screenshotPreviews])
+  const selectedScoringLeague = leagues.find((league) => league.requireVerifiedRuns) ?? leagues[0]
+  const eligibleActivities = useMemo(() => selectedScoringLeague?.requireVerifiedRuns
+    ? activities.filter((activity) => evidenceStatuses.some((item) =>
+        item.activityId === activity.id && item.leagueId === selectedScoringLeague.id && item.status === 'approved'))
+    : activities, [activities, evidenceStatuses, selectedScoringLeague])
+  const scoringIds = useMemo(() => new Set(weeklyScoringRuns(eligibleActivities, selectedScoringLeague?.runsPerWeek ?? leagueRules.scoringRunsPerWeek).map((activity) => activity.id)), [eligibleActivities, selectedScoringLeague])
   const visibleActivities = activities.filter((activity) => filter === 'all' || filter === 'training' ? filter === 'all' || activity.training : scoringIds.has(activity.id))
   const selected = visibleActivities.find((activity) => activity.id === selectedId) ?? visibleActivities[0]
 
@@ -473,54 +558,64 @@ function ActivitiesPage() {
   const closeScreenshot = () => {
     if (screenshotReading || screenshotSaving) return
     setScreenshotModal(false)
-    setScreenshotPreview('')
+    setScreenshotFiles([])
+    setScreenshotPreviews([])
   }
-  const uploadScreenshot = async (file?: File) => {
-    if (!file) return
-    setMessage('')
-    setError('')
-    setScreenshotError('')
-    setScreenshotHint('')
-    setScreenshotName('Strava run')
-    setScreenshotDate('')
-    setScreenshotDistance('')
-    setScreenshotElevation('')
-    setScreenshotDuration('')
-    setScreenshotMoving('')
-    setScreenshotElapsedConfirmed(false)
-    setScreenshotTraining(false)
-    setScreenshotProgress(0)
-    setScreenshotModal(true)
-    setScreenshotReading(true)
-    let preview = ''
-    try {
-      if (typeof URL.createObjectURL === 'function') preview = URL.createObjectURL(file)
-    } catch {
-      // Some test browsers cannot create an object URL from their File implementation.
+
+  const uploadScreenshotFiles = async (files: File[]) => {
+    setMessage(''); setError(''); setScreenshotError(''); setScreenshotHint('')
+    setScreenshotModal(true); setScreenshotReading(true); setScreenshotProgress(0)
+    if (!screenshotFiles.length) {
+      setScreenshotName('Strava run'); setScreenshotDate(''); setScreenshotElapsedConfirmed(false)
+      setScreenshotLeagueId(leagues.find((league) => league.requireVerifiedRuns)?.id ?? leagues[0]?.id ?? '')
     }
-    setScreenshotPreview(preview)
     try {
-      const metrics = await readStravaScreenshot(file, setScreenshotProgress)
-      setScreenshotDistance(metrics.distanceKm === null ? '' : String(metrics.distanceKm))
-      setScreenshotElevation(metrics.elevationM === null ? '' : String(metrics.elevationM))
-      setScreenshotDuration(metrics.elapsedSeconds === null ? '' : formatScreenshotTime(metrics.elapsedSeconds))
-      setScreenshotMoving(metrics.movingSeconds === null ? '' : formatScreenshotTime(metrics.movingSeconds))
-      if (metrics.elapsedSeconds === null) setScreenshotHint('Elapsed time was not found. Enter the full elapsed time from Strava; moving time alone cannot be used for scoring.')
-      else setScreenshotHint('Elapsed time was detected. Check it against the original activity before saving.')
+      validateEvidenceFiles(files)
+      setScreenshotFiles(files)
+      setScreenshotPreviews(files.map((file) => {
+        try { return URL.createObjectURL(file) } catch { return '' }
+      }))
+      const metrics = []
+      let failures = 0
+      for (const [index, file] of files.entries()) {
+        try {
+          metrics.push(await readStravaScreenshot(file, (percent) => {
+            setScreenshotProgress(Math.round((index * 100 + percent) / files.length))
+          }))
+        } catch {
+          metrics.push({ distanceKm: null, elevationM: null, elapsedSeconds: null, movingSeconds: null })
+          failures += 1
+        }
+      }
+      const combined = reconcileScreenshots(metrics)
+      setScreenshotDistance(combined.distanceKm === null ? '' : String(combined.distanceKm))
+      setScreenshotElevation(combined.elevationM === null ? '' : String(combined.elevationM))
+      setScreenshotDuration(combined.elapsedSeconds === null ? '' : formatScreenshotTime(combined.elapsedSeconds))
+      setScreenshotMoving(combined.movingSeconds === null ? '' : formatScreenshotTime(combined.movingSeconds))
+      setScreenshotDetectedElapsed(combined.elapsedSeconds)
+      setScreenshotWarnings([
+        ...combined.warnings,
+        ...(failures ? ['Screenshot text recognition was incomplete: organiser must check the originals'] : []),
+      ])
+      setScreenshotHint(combined.recognisedElapsed
+        ? 'Elapsed time found. Check both original images and every value before submitting.'
+        : 'Elapsed time was not recognised. Add the Strava activity details screen if necessary. The organiser must be able to see elapsed time clearly.')
     } catch (caught) {
-      setScreenshotError(caught instanceof Error ? caught.message : 'Text recognition failed. Enter the run details from the screenshot manually.')
-      setScreenshotHint('You can still enter all the values below manually without using the reader.')
+      setScreenshotFiles([]); setScreenshotPreviews([])
+      setScreenshotError(caught instanceof Error ? caught.message : 'These screenshots could not be read.')
     } finally {
       setScreenshotReading(false)
       if (screenshotPicker.current) screenshotPicker.current.value = ''
+      if (screenshotExtraPicker.current) screenshotExtraPicker.current.value = ''
     }
   }
   const submitScreenshot = async (event: FormEvent) => {
     event.preventDefault()
-    setScreenshotError('')
-    setScreenshotSaving(true)
+    setScreenshotError(''); setScreenshotSaving(true)
     try {
-      if (!screenshotElapsedConfirmed) throw new Error('Confirm that the time includes stops and is the full elapsed time.')
+      validateEvidenceFiles(screenshotFiles)
+      if (!screenshotLeagueId) throw new Error('Join or create a private league before submitting evidence.')
+      if (!screenshotElapsedConfirmed) throw new Error('Confirm elapsed time is visible on the screenshots, not merely typed in.')
       const occurredMs = Date.parse(screenshotDate)
       if (!screenshotDate || !Number.isFinite(occurredMs) || occurredMs > Date.now() + 5 * 60_000) {
         throw new Error('Enter the actual run date and time (not a future date).')
@@ -532,51 +627,52 @@ function ActivitiesPage() {
         throw new Error('Enter a valid run name and distance between 0.1 and 500 km.')
       }
       if (!screenshotElevation.trim() || !Number.isFinite(elevation) || !Number.isInteger(elevation) || elevation < 0 || elevation > 20000) {
-        throw new Error('Check the elevation gain. Enter 0 only when no ascent data is available.')
+        throw new Error('Check the elevation gain. Enter 0 only if there was no ascent.')
       }
-      if (!elapsed) throw new Error('Enter a valid HH:MM:SS elapsed time.')
+      if (!elapsed || elapsed > 604800) throw new Error('Enter a valid HH:MM:SS elapsed time.')
       const occurredAt = new Date(occurredMs).toISOString()
       const alreadyEntered = activities.some((activity) => activity.occurredAt
         && Math.abs(new Date(activity.occurredAt).getTime() - occurredMs) < 60_000
         && Math.abs(activity.distanceKm - distance) < 0.01
         && activity.elapsedSeconds === elapsed)
-      if (alreadyEntered) throw new Error('This looks like a run already in your activity history. Check before adding it twice.')
-      await addActivity({
-        name: screenshotName.trim(),
-        occurredAt,
-        location: 'Strava screenshot',
-        source: 'Strava screenshot',
-        distanceKm: distance,
-        elevationM: elevation,
-        elapsedSeconds: elapsed,
-        training: screenshotTraining,
-        providerExternalId: ['screenshot', occurredAt, distance.toFixed(3), elapsed].join(':'),
-      })
-      setScreenshotModal(false)
-      setScreenshotPreview('')
-      setMessage('Strava screenshot run added and scored.')
+      if (alreadyEntered) throw new Error('This looks like a run already in your history. Check before adding it twice.')
+      await submitScreenshotEvidence({
+        name: screenshotName.trim(), occurredAt, location: 'Strava screenshot',
+        source: 'Strava screenshot', distanceKm: distance, elevationM: elevation,
+        elapsedSeconds: elapsed, training: screenshotTraining,
+      }, screenshotLeagueId, screenshotFiles, screenshotWarnings, screenshotDetectedElapsed)
+      setScreenshotModal(false); setScreenshotFiles([]); setScreenshotPreviews([])
+      setMessage('Run submitted with private evidence. In verified leagues it will count only after the organiser approves it.')
     } catch (caught) {
-      setScreenshotError(caught instanceof Error ? caught.message : 'The screenshot run could not be added.')
-    } finally {
-      setScreenshotSaving(false)
-    }
+      setScreenshotError(caught instanceof Error ? caught.message : 'The screenshot run could not be submitted.')
+    } finally { setScreenshotSaving(false) }
   }
-  return <div className="app-page"><div className="page-intro"><div><span className="eyebrow">ACTIVITY HISTORY</span><h2>Every run, explained.</h2><p>See the data behind each score and which runs count towards your league week.</p></div><div className="page-actions"><input ref={filePicker} type="file" accept=".gpx,.fit" hidden onChange={(event) => void uploadFile(event.target.files?.[0])} /><input ref={screenshotPicker} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" aria-label="Choose Strava screenshot" hidden onChange={(event) => void uploadScreenshot(event.target.files?.[0])} /><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => screenshotPicker.current?.click()}><Upload size={17} /> Upload Strava screenshot</button><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => filePicker.current?.click()}><Upload size={17} /> {busy ? 'Importing…' : 'Import GPX / FIT'}</button><button className="button button-primary" onClick={() => { setModal(true); setError('') }}><Plus size={17} /> Enter run</button></div></div>{message && <div className="notice success"><CheckCircle2 />{message}</div>}{error && !modal && !screenshotModal && <div className="notice error">{error}</div>}<div className="activities-layout"><section className="panel activity-list-panel"><div className="activity-filter"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All runs</button><button className={filter === 'scoring' ? 'active' : ''} onClick={() => setFilter('scoring')}>Scoring</button><button className={filter === 'training' ? 'active' : ''} onClick={() => setFilter('training')}>Training</button></div>{visibleActivities.length ? visibleActivities.map((activity) => <div className={activity.id === selected?.id ? 'selectable-activity selected' : 'selectable-activity'} key={activity.id}><span className="counted-chip">{scoringIds.has(activity.id) ? 'COUNTS' : activity.training ? 'TRAINING' : 'NEXT BEST'}</span><ActivityRow activity={activity} onOpen={() => setSelectedId(activity.id)} /></div>) : <EmptyState title="No matching runs" text={activities.length ? 'Try a different filter.' : 'Upload a Strava screenshot, import GPX/FIT or enter a run.'} action={activities.length ? undefined : 'Enter a run'} onAction={() => setModal(true)} />}</section>{selected ? <ScoreBreakdown activity={selected} /> : <aside className="score-breakdown empty-score"><Gauge /><h3>Your score breakdown will appear here.</h3></aside>}</div>
+  return <div className="app-page"><div className="page-intro"><div><span className="eyebrow">ACTIVITY HISTORY</span><h2>Every run, explained.</h2><p>See the data behind each score and which runs count towards your league week.</p></div><div className="page-actions"><input ref={filePicker} type="file" accept=".gpx,.fit" hidden onChange={(event) => void uploadFile(event.target.files?.[0])} /><input ref={screenshotPicker} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" multiple aria-label="Choose Strava screenshots" hidden onChange={(event) => void uploadScreenshotFiles(Array.from(event.target.files ?? []))} /><input ref={screenshotExtraPicker} type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" aria-label="Add a second Strava screenshot" hidden onChange={(event) => void uploadScreenshotFiles([...screenshotFiles, ...Array.from(event.target.files ?? [])])} /><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => screenshotPicker.current?.click()}><Upload size={17} /> Upload 1–2 Strava screenshots</button><button className="button button-outline" disabled={busy || screenshotReading} onClick={() => filePicker.current?.click()}><Upload size={17} /> {busy ? 'Importing…' : 'Import GPX / FIT'}</button><button className="button button-primary" onClick={() => { setModal(true); setError('') }}><Plus size={17} /> Enter run</button></div></div>{selectedScoringLeague?.requireVerifiedRuns && <div className="notice evidence-rule-notice"><ShieldCheck /> Only organiser-approved evidence counts in {selectedScoringLeague.name}. Manual and GPX/FIT runs stay in history but cannot earn points until proof is approved.</div>}{message && <div className="notice success"><CheckCircle2 />{message}</div>}{error && !modal && !screenshotModal && <div className="notice error">{error}</div>}<div className="activities-layout"><section className="panel activity-list-panel"><div className="activity-filter"><button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All runs</button><button className={filter === 'scoring' ? 'active' : ''} onClick={() => setFilter('scoring')}>Scoring</button><button className={filter === 'training' ? 'active' : ''} onClick={() => setFilter('training')}>Training</button></div>{visibleActivities.length ? visibleActivities.map((activity) => <div className={activity.id === selected?.id ? 'selectable-activity selected' : 'selectable-activity'} key={activity.id}><span className="counted-chip">{activity.training ? 'TRAINING' : scoringIds.has(activity.id) ? 'COUNTS' : selectedScoringLeague?.requireVerifiedRuns ? (evidenceStatuses.some((item) => item.activityId === activity.id && item.leagueId === selectedScoringLeague.id && item.status === 'rejected') ? 'REJECTED' : 'NOT APPROVED') : 'NEXT BEST'}</span><ActivityRow activity={activity} onOpen={() => setSelectedId(activity.id)} /></div>) : <EmptyState title="No matching runs" text={activities.length ? 'Try a different filter.' : 'Upload a Strava screenshot, import GPX/FIT or enter a run.'} action={activities.length ? undefined : 'Enter a run'} onAction={() => setModal(true)} />}</section>{selected ? <ScoreBreakdown activity={selected} /> : <aside className="score-breakdown empty-score"><Gauge /><h3>Your score breakdown will appear here.</h3></aside>}</div>
     <section className="method-panel"><span className="method-icon"><BarChart3 /></span><div><span className="eyebrow">CURRENT METHODOLOGY</span><h3>RunningScore is designed to be inspectable.</h3><p>It uses elapsed time, effort distance and Riegel distance normalisation. Imported runs currently use activity totals; interval blocks and heart rate are not included in their score.</p></div><div className="method-stats"><span><small>Benchmark</small><strong>20:21 5K</strong></span><span><small>Climb adjustment</small><strong>100 m = 1 km</strong></span><span><small>Scale</small><strong>1–25 points</strong></span></div></section>
-    {screenshotModal && <Modal title="Review Strava screenshot" onClose={closeScreenshot}>
+    {screenshotModal && <Modal title="Submit Strava evidence" onClose={closeScreenshot}>
       <form className="modal-form screenshot-form" onSubmit={submitScreenshot}>
-        <p>The screenshot is read in your browser, not uploaded or saved. Recognition can make mistakes: check every value against Strava before adding a score.</p>
-        {screenshotPreview && <img className="screenshot-preview" src={screenshotPreview} alt="Selected Strava screenshot to check against the fields" />}
-        {screenshotReading ? <div className="screenshot-reading" role="status"><RefreshCw size={18} /> Reading screenshot locally… {screenshotProgress > 0 ? screenshotProgress + '%' : 'starting'}</div> : <>
+        <p>Upload one or two screenshots of the same Strava activity. Include the screen that shows <strong>elapsed time</strong>, including rests. Images are read locally, then privately stored for your league organiser to review.</p>
+        <div className="screenshot-preview-grid">{screenshotPreviews.map((preview, index) => preview && <div key={preview}>
+          <img className="screenshot-preview" src={preview} alt={'Your original Strava screenshot ' + (index + 1)} />
+          <small>{index === 0 ? 'Screenshot 1' : 'Screenshot 2'} · {screenshotFiles[index]?.name}</small>
+        </div>)}</div>
+        {screenshotFiles.length === 1 && !screenshotReading && <button type="button" className="button button-outline button-small screenshot-add-second" onClick={() => screenshotExtraPicker.current?.click()}><Plus size={16} /> Add second screenshot with elapsed time</button>}
+        {screenshotReading ? <div className="screenshot-reading" role="status"><RefreshCw size={18} /> Reading screenshots locally… {screenshotProgress > 0 ? screenshotProgress + '%' : 'starting'}</div> : <>
           {screenshotHint && <p className="screenshot-hint">{screenshotHint}</p>}
-          {screenshotMoving && <p className="screenshot-moving"><strong>Moving time detected: {screenshotMoving}.</strong> RunningScore needs elapsed time, including stops. Do not use moving time unless they are identical.</p>}
-          <div className="form-grid two"><label>Run name<input value={screenshotName} onChange={(event) => setScreenshotName(event.target.value)} maxLength={120} required /></label><label>Run date and time<input aria-label="Run date and time" type="datetime-local" value={screenshotDate} onChange={(event) => setScreenshotDate(event.target.value)} required /><small>Enter the actual date and start time. Screenshots may omit or shorten this.</small></label></div>
-          <div className="form-grid three"><label>Distance (km)<input type="number" min="0.1" max="500" step="0.001" value={screenshotDistance} onChange={(event) => setScreenshotDistance(event.target.value)} required /></label><label>Elevation gain (m)<input aria-label="Elevation gain (m)" type="number" min="0" max="20000" step="1" value={screenshotElevation} onChange={(event) => setScreenshotElevation(event.target.value)} required /><small>Enter 0 if ascent data is unavailable.</small></label><label>Elapsed time (HH:MM:SS)<input value={screenshotDuration} onChange={(event) => setScreenshotDuration(event.target.value)} placeholder="00:30:00" pattern="\d{1,3}:\d{2}:\d{2}" required /></label></div>
-          <label className="screenshot-confirm"><input type="checkbox" checked={screenshotElapsedConfirmed} onChange={(event) => setScreenshotElapsedConfirmed(event.target.checked)} required /><span>I checked the distance, elevation, date and full elapsed time against Strava. This is not just moving time.</span></label>
-          <label className="toggle-row"><span><strong>Training only</strong><small>Don't count this activity in league scoring.</small></span><input type="checkbox" checked={screenshotTraining} onChange={(event) => setScreenshotTraining(event.target.checked)} /></label>
+          {screenshotWarnings.length > 0 && <div className="screenshot-warnings"><strong>For organiser review</strong><ul>{screenshotWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
+          {screenshotMoving && <p className="screenshot-moving"><strong>Moving time detected: {screenshotMoving}.</strong> This cannot replace elapsed time. If the full duration is missing, add the Strava details screenshot.</p>}
+          <label>Private league<select value={screenshotLeagueId} onChange={(event) => setScreenshotLeagueId(event.target.value)} required>
+            <option value="">Choose your league</option>{leagues.map((league) => <option value={league.id} key={league.id}>{league.name} {league.requireVerifiedRuns ? '(approval required)' : '(standard scoring)'}</option>)}
+          </select><small>{leagues.length ? 'Only the chosen league organiser will be able to review these images.' : 'Create or join a league first, on the Leagues page.'}</small></label>
+          <div className="form-grid two"><label>Run name<input value={screenshotName} onChange={(event) => setScreenshotName(event.target.value)} maxLength={120} required /></label><label>Run date and time<input aria-label="Run date and time" type="datetime-local" value={screenshotDate} onChange={(event) => setScreenshotDate(event.target.value)} required /><small>Actual activity start date and time.</small></label></div>
+          <div className="form-grid three"><label>Distance (km)<input type="number" min="0.1" max="500" step="0.001" value={screenshotDistance} onChange={(event) => setScreenshotDistance(event.target.value)} required /></label><label>Elevation gain (m)<input aria-label="Elevation gain (m)" type="number" min="0" max="20000" step="1" value={screenshotElevation} onChange={(event) => setScreenshotElevation(event.target.value)} required /></label><label>Elapsed time (HH:MM:SS)<input aria-label="Elapsed time (HH:MM:SS)" value={screenshotDuration} onChange={(event) => setScreenshotDuration(event.target.value)} placeholder="00:30:00" pattern="\d{1,3}:\d{2}:\d{2}" required /><small>Must include any stops.</small></label></div>
+          <label className="screenshot-confirm"><input type="checkbox" checked={screenshotElapsedConfirmed} onChange={(event) => setScreenshotElapsedConfirmed(event.target.checked)} required /><span>I can see the full elapsed time on at least one of these original screenshots and have checked the submitted figures. I understand a typed time alone cannot be approved.</span></label>
+          <label className="toggle-row"><span><strong>Training only</strong><small>Keep this run in history but never count it in league scoring.</small></span><input type="checkbox" checked={screenshotTraining} onChange={(event) => setScreenshotTraining(event.target.checked)} /></label>
           {screenshotError && <div className="form-error" role="alert">{screenshotError}</div>}
-          <button className="button button-primary button-full" disabled={screenshotSaving}>{screenshotSaving ? 'Saving…' : 'Add screenshot run'} <ArrowRight size={17} /></button>
+          <button className="button button-primary button-full" disabled={screenshotSaving || !screenshotFiles.length || !screenshotLeagueId}>{screenshotSaving ? 'Uploading private proof…' : 'Submit for organiser review'} <ArrowRight size={17} /></button>
+          <small className="screenshot-privacy-note">Your screenshots are private: only you and the selected league organiser can access them. Each image must be under 6 MB. No paid AI service is required. An approved submission cannot be edited silently.</small>
         </>}
+        {!screenshotReading && screenshotError && !screenshotFiles.length && <div className="form-error" role="alert">{screenshotError}</div>}
       </form>
     </Modal>}
     {modal && <Modal title="Enter a run" onClose={() => setModal(false)}><form className="modal-form" onSubmit={submitManual}><div className="form-grid two"><label>Run name<input value={name} onChange={(event) => setName(event.target.value)} required autoFocus /></label><label>Date and time<input type="datetime-local" value={occurredAt} onChange={(event) => setOccurredAt(event.target.value)} required /></label></div><label>Location<input value={location} onChange={(event) => setLocation(event.target.value)} placeholder="Optional" /></label><div className="form-grid three"><label>Distance<div className="input-suffix"><input type="number" min="0.1" max="500" step="0.01" value={distanceKm} onChange={(event) => setDistanceKm(Number(event.target.value))} required /><span>km</span></div></label><label>Elevation<div className="input-suffix"><input type="number" min="0" max="20000" value={elevationM} onChange={(event) => setElevationM(Number(event.target.value))} required /><span>m</span></div></label><label>Elapsed time<input value={duration} onChange={(event) => setDuration(event.target.value)} pattern="\d{1,2}:\d{2}:\d{2}" placeholder="00:30:00" required /><small>HH:MM:SS</small></label></div><label className="toggle-row"><span><strong>Training only</strong><small>Keep this run in your plan history without counting it in league scoring.</small></span><input type="checkbox" checked={training} onChange={(event) => setTraining(event.target.checked)} /></label>{error && <div className="form-error">{error}</div>}<button className="button button-primary button-full" disabled={busy}>{busy ? 'Calculating…' : 'Add and score run'} <ArrowRight size={17} /></button></form></Modal>}
@@ -676,7 +772,7 @@ function ResetPasswordPage() {
 function LegalPage({ type }: { type: 'privacy' | 'terms' }) {
   return <div className="simple-page"><PublicHeader /><main className="legal-page"><span className="eyebrow">RUNNINGLEAGUE BETA</span><h1>{type === 'privacy' ? 'Privacy Policy' : 'Terms of Use'}</h1><p className="legal-updated">Last updated: 7 November 2026</p>{type === 'privacy' ? <>
     <h2>What we collect</h2><p>We collect the account details you provide, your league membership, training-plan answers, preferences and running activity data. Connected services such as Strava share activity data only after you authorise access.</p>
-    <h2>Screenshot processing</h2><p>If you select a Strava screenshot, the text is recognised on your device. The screenshot is not sent to or stored by RunningLeague; only the run figures you review and submit are saved. The browser loads free OCR code and language data from third-party hosts.</p><h2>How we use it</h2><p>We use this information to operate your account, score activities, generate training plans, show private league tables, provide support and improve the beta. We do not sell your personal data.</p>
+    <h2>Screenshot processing and private evidence</h2><p>Screenshot text is recognised locally on your device using browser-loaded OCR code. When you submit a run to a league for verification, one or two original screenshots are uploaded to private storage. Only you and that league's organiser can access them for reviewing scores. Submitted images remain attached to the activity during the beta and can be requested for deletion through support. We also store your confirmed run metrics, evidence status and review notes.</p><h2>How we use it</h2><p>We use this information to operate your account, score activities, generate training plans, show private league tables, provide support and improve the beta. We do not sell your personal data.</p>
     <h2>Storage and security</h2><p>Account and product data is stored using managed cloud services with access controls. Passwords are handled by our authentication provider and are not stored in the RunningLeague application database.</p>
     <h2>Your choices</h2><p>You may revoke provider access in your Strava settings, or ask for access, correction or deletion of your data. During the beta, submit privacy requests through the support page.</p>
     <h2>Retention and lawful basis</h2><p>We process data to provide the service you request and for our legitimate interests in securing and improving it. We retain active account data while the account is in use and remove it following a valid deletion request, subject to legal requirements.</p>

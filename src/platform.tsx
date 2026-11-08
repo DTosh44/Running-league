@@ -2,8 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { useAuth } from './auth'
 import { demoActivities, leagueMembers } from './data'
 import { calculateRunScore } from './scoring'
+import { validateEvidenceFiles, validateEvidenceFile } from './verified-evidence'
 import { getAccessToken, supabase } from './supabase'
-import type { ActivityRecord, League, LeagueTableEntry, TrainingPlan, UserPreferences } from './types'
+import type { ActivityRecord, EvidenceReviewRow, EvidenceStatus, League, LeagueTableEntry, TrainingPlan, UserPreferences } from './types'
 
 type NewActivity = {
   name: string
@@ -22,15 +23,20 @@ type PlatformContextValue = {
   error: string
   activities: ActivityRecord[]
   leagues: League[]
+  evidenceStatuses: EvidenceStatus[]
   plan: TrainingPlan | null
   completedSessions: string[]
   preferences: UserPreferences
   stravaAvailable: boolean
   stravaConnected: boolean
   addActivity: (activity: NewActivity) => Promise<void>
-  createLeague: (input: { name: string; description: string; seasonWeeks: number; runsPerWeek: number }) => Promise<League>
+  createLeague: (input: { name: string; description: string; seasonWeeks: number; runsPerWeek: number; requireVerifiedRuns?: boolean }) => Promise<League>
   joinLeague: (code: string) => Promise<void>
   getLeagueTable: (leagueId: string) => Promise<LeagueTableEntry[]>
+  submitScreenshotEvidence: (input: NewActivity, leagueId: string, screenshots: File[], flags: string[], detectedElapsedSeconds: number | null) => Promise<void>
+  getEvidenceQueue: (leagueId: string) => Promise<EvidenceReviewRow[]>
+  reviewEvidence: (evidenceId: string, decision: 'approved' | 'rejected', note?: string) => Promise<void>
+  getEvidenceLinks: (paths: string[]) => Promise<string[]>
   savePlan: (plan: TrainingPlan | null) => Promise<void>
   toggleSessionCompletion: (key: string) => Promise<void>
   updatePreferences: (preferences: UserPreferences) => Promise<void>
@@ -88,6 +94,7 @@ const mapLeague = (row: Record<string, unknown>, role = 'member'): League => ({
   memberCount: Number(row.member_count || 1),
   role: role === 'owner' ? 'owner' : 'member',
   createdAt: String(row.created_at || new Date().toISOString()),
+  requireVerifiedRuns: Boolean(row.require_verified_runs),
 })
 
 export function PlatformProvider({ children }: { children: ReactNode }) {
@@ -96,6 +103,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState('')
   const [activities, setActivities] = useState<ActivityRecord[]>([])
   const [leagues, setLeagues] = useState<League[]>([])
+  const [evidenceStatuses, setEvidenceStatuses] = useState<EvidenceStatus[]>([])
   const [plan, setPlan] = useState<TrainingPlan | null>(null)
   const [completedSessions, setCompletedSessions] = useState<string[]>([])
   const [preferences, setPreferences] = useState<UserPreferences>(defaultPreferences)
@@ -106,6 +114,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     if (!user) {
       setActivities([])
       setLeagues([])
+      setEvidenceStatuses([])
       setPlan(null)
       return
     }
@@ -120,22 +129,29 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
           { id: 'sunday-miles', name: 'Sunday Miles', code: 'SUNMILES', description: 'A rolling friends league.', seasonWeeks: 10, runsPerWeek: 3, memberCount: 7, role: 'member', createdAt: new Date().toISOString() },
         ] : []
         setLeagues(readLocal(localKey(user.id, 'leagues'), demoLeagues))
+        setEvidenceStatuses([])
         setPlan(readLocal<TrainingPlan | null>(localKey(user.id, 'plan'), null))
         setCompletedSessions(readLocal<string[]>(localKey(user.id, 'completed'), []))
         setPreferences(readLocal<UserPreferences>(localKey(user.id, 'preferences'), defaultPreferences))
         return
       }
 
-      const [activityResult, leagueResult, planResult, preferenceResult] = await Promise.all([
+      const [activityResult, leagueResult, planResult, preferenceResult, evidenceResult] = await Promise.all([
         supabase.from('activities').select('*').eq('user_id', user.id).order('occurred_at', { ascending: false }),
         supabase.rpc('my_leagues'),
         supabase.from('training_plans').select('plan, completed_sessions').maybeSingle(),
         supabase.from('preferences').select('weekly_email, league_notifications, public_profile').maybeSingle(),
+        supabase.from('activity_evidence').select('activity_id, league_id, status, client_flags').eq('user_id', user.id),
       ])
       if (activityResult.error) throw activityResult.error
       if (leagueResult.error) throw leagueResult.error
       if (planResult.error) throw planResult.error
       if (preferenceResult.error) throw preferenceResult.error
+      if (evidenceResult.error) throw evidenceResult.error
+      setEvidenceStatuses((evidenceResult.data ?? []).map((row) => ({
+        activityId: String(row.activity_id), leagueId: String(row.league_id),
+        status: row.status as EvidenceStatus['status'], flags: (row.client_flags as string[]) ?? [],
+      })))
       setActivities((activityResult.data ?? []).map((row) => mapActivity(row as Record<string, unknown>)))
       setLeagues((leagueResult.data ?? []).map((row: Record<string, unknown>) => mapLeague(row, String(row.role))))
       const savedPlan = planResult.data?.plan as TrainingPlan | null | undefined
@@ -170,6 +186,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     error,
     activities,
     leagues,
+    evidenceStatuses,
     plan,
     completedSessions,
     preferences,
@@ -205,7 +222,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     async createLeague(input) {
       if (!user) throw new Error('Log in before creating a league.')
       if (supabase) {
-        const { data, error } = await supabase.rpc('create_league', {
+        const { data, error } = await supabase.rpc(input.requireVerifiedRuns ? 'create_verified_league' : 'create_league', {
           league_name: input.name,
           league_description: input.description,
           season_weeks_input: input.seasonWeeks,
@@ -216,7 +233,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
         await refresh()
         return league
       }
-      const league = mapLeague({ id: crypto.randomUUID(), code: Math.random().toString(36).slice(2, 8).toUpperCase(), created_at: new Date().toISOString(), member_count: 1, ...input, season_weeks: input.seasonWeeks, runs_per_week: input.runsPerWeek }, 'owner')
+      const league = mapLeague({ id: crypto.randomUUID(), code: Math.random().toString(36).slice(2, 8).toUpperCase(), created_at: new Date().toISOString(), member_count: 1, ...input, season_weeks: input.seasonWeeks, runs_per_week: input.runsPerWeek, require_verified_runs: input.requireVerifiedRuns }, 'owner')
       const next = [...leagues, league]
       localStorage.setItem(localKey(user.id, 'leagues'), JSON.stringify(next))
       setLeagues(next)
@@ -243,6 +260,83 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       }
       if (leagueId === 'north-london-ten') return leagueMembers.map((member) => ({ userId: member.id, name: member.name, initials: member.initials, weeklyPoints: member.weeklyPoints, seasonPoints: member.seasonPoints, runs: member.runs }))
       return user ? [{ userId: user.id, name: user.name, initials: user.initials, weeklyPoints: activities.slice(0, 3).reduce((sum, item) => sum + item.score.points, 0), seasonPoints: 0, runs: Math.min(3, activities.length) }] : []
+    },
+    async submitScreenshotEvidence(input, leagueId, screenshots, flags, detectedElapsedSeconds) {
+      if (!user || !supabase) throw new Error('Verified screenshot submissions require a live Running League account.')
+      if (!leagues.some((league) => league.id === leagueId)) throw new Error('Join or create a league before submitting evidence.')
+      validateEvidenceFiles(screenshots)
+      const uploadId = crypto.randomUUID()
+      const uploadedPaths: string[] = []
+      let submitted = false
+      try {
+        for (const [index, file] of screenshots.entries()) {
+          const extension = validateEvidenceFile(file)
+          const path = user.id + '/' + uploadId + '/' + (index === 0 ? 'overview' : 'details') + '.' + extension
+          const mime = extension === 'jpg' ? 'image/jpeg' : 'image/' + extension
+          const { error: uploadError } = await supabase.storage.from('run-evidence')
+            .upload(path, file, { cacheControl: '3600', upsert: false, contentType: mime })
+          if (uploadError) throw new Error('Could not upload private screenshot evidence: ' + uploadError.message)
+          uploadedPaths.push(path)
+        }
+        const { error: submitError } = await supabase.rpc('submit_evidenced_run', {
+          league_id_input: leagueId,
+          run_name_input: input.name,
+          occurred_at_input: input.occurredAt,
+          distance_km_input: input.distanceKm,
+          elevation_m_input: input.elevationM,
+          elapsed_seconds_input: input.elapsedSeconds,
+          training_input: input.training ?? false,
+          screenshot_paths_input: uploadedPaths,
+          client_flags_input: flags.slice(0, 10).map((flag) => flag.slice(0, 90)),
+          detected_elapsed_seconds_input: detectedElapsedSeconds,
+        })
+        if (submitError) throw new Error(submitError.code === '23505'
+          ? 'This run has already been submitted. Your earlier entry is still on record.'
+          : submitError.message)
+        submitted = true
+        await refresh()
+      } catch (caught) {
+        if (!submitted && uploadedPaths.length) {
+          // The private Storage policy permits cleanup only before a successful submission.
+          await supabase.storage.from('run-evidence').remove(uploadedPaths).catch(() => undefined)
+        }
+        throw caught
+      }
+    },
+    async getEvidenceQueue(leagueId) {
+      if (!supabase) return []
+      const { data, error } = await supabase.rpc('league_evidence_queue', { league_id_input: leagueId })
+      if (error) throw error
+      return (data ?? []).map((row: Record<string, unknown>) => ({
+        id: String(row.id), activityId: String(row.activity_id),
+        runnerId: String(row.runner_id), runnerName: String(row.runner_name),
+        runName: String(row.run_name), occurredAt: String(row.occurred_at),
+        distanceKm: Number(row.distance_km), elevationM: Number(row.elevation_m),
+        elapsedSeconds: Number(row.elapsed_seconds),
+        status: row.status as EvidenceReviewRow['status'],
+        flags: (row.client_flags as string[]) ?? [],
+        screenshotPaths: (row.screenshot_paths as string[]) ?? [],
+        reviewNote: String(row.review_note ?? ''), createdAt: String(row.created_at),
+      }))
+    },
+    async reviewEvidence(evidenceId, decision, note = '') {
+      if (!supabase) throw new Error('Evidence moderation requires live accounts.')
+      const { error } = await supabase.rpc('review_run_evidence', {
+        evidence_id_input: evidenceId, decision_input: decision, note_input: note,
+      })
+      if (error) throw error
+      await refresh()
+    },
+    async getEvidenceLinks(paths) {
+      const client = supabase
+      if (!client) throw new Error('Private evidence requires a live account.')
+      if (paths.length < 1 || paths.length > 2) throw new Error('Invalid evidence file list.')
+      const urls = await Promise.all(paths.map(async (path) => {
+        const { data, error } = await client.storage.from('run-evidence').createSignedUrl(path, 180)
+        if (error || !data?.signedUrl) throw new Error('This screenshot is not available to your account.')
+        return data.signedUrl
+      }))
+      return urls
     },
     async savePlan(nextPlan) {
       if (!user) throw new Error('Log in before saving a plan.')
@@ -290,7 +384,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       await refresh()
     },
     refresh,
-  }), [activities, completedSessions, error, leagues, loading, plan, preferences, refresh, stravaAvailable, stravaConnected, user])
+  }), [activities, completedSessions, error, evidenceStatuses, leagues, loading, plan, preferences, refresh, stravaAvailable, stravaConnected, user])
 
   return <PlatformContext.Provider value={value}>{children}</PlatformContext.Provider>
 }

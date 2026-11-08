@@ -75,23 +75,26 @@ describe('RunningLeague product', () => {
   })
 
 
-  it('requires a screenshot review before adding a Strava-sourced run', async () => {
+  it('reviews up to two screenshots and refuses unverified demo submissions', async () => {
     renderApp('/login')
     await logInDemo()
     fireEvent.click(screen.getByRole('link', { name: /Activities/i }))
-    const picker = screen.getByLabelText('Choose Strava screenshot')
-    fireEvent.change(picker, { target: { files: [new File(['image'], 'run.png', { type: 'image/png' })] } })
+    const picker = screen.getByLabelText('Choose Strava screenshots')
+    fireEvent.change(picker, { target: { files: [new File(['image'], 'overview.png', { type: 'image/png' })] } })
     expect(await screen.findByText(/Moving time detected/)).toBeInTheDocument()
     expect(screen.getByLabelText('Distance (km)')).toHaveValue(5.02)
     expect(screen.getByLabelText('Elevation gain (m)')).toHaveValue(32)
     expect(screen.getByLabelText('Elapsed time (HH:MM:SS)')).toHaveValue('00:24:20')
     expect(screen.getByLabelText('Run date and time')).toHaveValue('')
 
+    const second = screen.getByLabelText('Add a second Strava screenshot')
+    fireEvent.change(second, { target: { files: [new File(['image2'], 'details.png', { type: 'image/png' })] } })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Add second screenshot with elapsed time/ })).not.toBeInTheDocument())
     fireEvent.change(screen.getByLabelText('Run date and time'), { target: { value: '2026-11-07T08:30' } })
-    fireEvent.click(screen.getByRole('checkbox', { name: /I checked the distance/ }))
-    fireEvent.click(screen.getByRole('button', { name: /Add screenshot run/ }))
-    expect(await screen.findByText('Strava screenshot run added and scored.')).toBeInTheDocument()
-    expect(screen.getByText('Strava run')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox', { name: /I can see the full elapsed time/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Submit for organiser review/ }))
+    expect(await screen.findByText(/Verified screenshot submissions require a live Running League account/)).toBeInTheDocument()
+    expect(screen.queryByText('Strava run')).not.toBeInTheDocument()
   })
 
   it('creates a private league with an invite code', async () => {
