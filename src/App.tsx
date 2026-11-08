@@ -394,6 +394,8 @@ function LeaguesPage() {
   useEffect(() => {
     if (!selectedLeague || selectedLeague.role !== 'owner') return
     let active = true
+    setEvidenceQueue([])
+    setReviewError('')
     void getEvidenceQueue(selectedLeague.id)
       .then((rows) => { if (active) setEvidenceQueue(rows) })
       .catch(() => { if (active) setReviewError('Could not load the private review queue.') })
@@ -530,7 +532,7 @@ function ActivitiesPage() {
     ? activities.filter((activity) => evidenceStatuses.some((item) =>
         item.activityId === activity.id && item.leagueId === selectedScoringLeague.id && item.status === 'approved'))
     : activities, [activities, evidenceStatuses, selectedScoringLeague])
-  const scoringIds = useMemo(() => new Set(weeklyScoringRuns(eligibleActivities, leagueRules.scoringRunsPerWeek).map((activity) => activity.id)), [eligibleActivities])
+  const scoringIds = useMemo(() => new Set(weeklyScoringRuns(eligibleActivities, selectedScoringLeague?.runsPerWeek ?? leagueRules.scoringRunsPerWeek).map((activity) => activity.id)), [eligibleActivities, selectedScoringLeague])
   const visibleActivities = activities.filter((activity) => filter === 'all' || filter === 'training' ? filter === 'all' || activity.training : scoringIds.has(activity.id))
   const selected = visibleActivities.find((activity) => activity.id === selectedId) ?? visibleActivities[0]
 
