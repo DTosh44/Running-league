@@ -322,7 +322,7 @@ create or replace function public.review_run_evidence(
 returns void language plpgsql security definer set search_path = public as $$
 declare target_league uuid;
 begin
-  if decision_input not in ('approved', 'rejected') then
+  if decision_input is null or decision_input not in ('approved', 'rejected') then
     raise exception 'The decision must be approved or rejected.';
   end if;
   if length(coalesce(note_input,'')) > 400 then raise exception 'Review note too long.'; end if;
@@ -346,7 +346,8 @@ begin
   if auth.role() = 'authenticated'
     and exists (select 1 from public.activity_evidence ev where ev.activity_id = old.id)
   then raise exception 'An evidenced run is locked. Ask the league organiser to review a correction.'; end if;
-  return case when tg_op = 'DELETE' then old else new end;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
 end;
 $$;
 drop trigger if exists prevent_evidenced_run_edits on public.activities;
