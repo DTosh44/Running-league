@@ -37,13 +37,28 @@ Strava code is present but inactive. The connected account's API settings requir
 
 Garmin's direct API requires partner approval. Garmin users can use the working FIT-file import without a direct Garmin connection.
 
-## Strava screenshot pilot
+## Verified screenshot league pilot (PR #3 — not deployed)
 
-The Activities page now offers **Upload Strava screenshot** for PNG, JPG and WebP images (maximum 12 MB). A pinned Tesseract.js 7 OCR build and language assets download to the browser on first use; recognition is performed locally with no per-image AI API charge. The screenshot itself is not sent to or stored by RunningLeague. An internet connection is needed to load the free reader; if recognition fails, users can still enter the numbers manually.
+The proposed friends-only version accepts **one or two Strava screenshots** (PNG, JPG or WebP; maximum 6 MB each). A free pinned Tesseract.js browser OCR reader attempts to recognise distance, ascent, moving time and *explicitly labelled elapsed time*. The browser compares the screenshots and flags missing/contradictory figures. OCR is advisory: it cannot prove the screenshots are genuine, or that two images show the same activity.
 
-Extracted distance, elevation and explicitly labelled **elapsed time** are editable before a run is saved. Moving time is shown only as a warning/reference: it is never substituted for elapsed time. A date/start time and confirmation checkbox are mandatory. Duplicate checks compare against existing activities, with an additional server uniqueness key for identical screenshot submissions; this is not fraud-proof evidence. Only confirmed activity metrics are persisted. To avoid a production database migration, screenshot entries use the existing database source constraint (stored as Manual), while a screenshot-prefixed external ID enables the UI to display **Strava screenshot**.
+Runners choose a private league, correct the extracted figures, and confirm that the **original screenshots visibly show elapsed time**, including stops. **Both original files are uploaded** to a *private* Supabase Storage bucket when submitted; unlike the earlier one-screenshot beta, this verified flow retains the images for organiser review. The runner and creator of the selected league may view the originals with short-lived signed links. No paid AI API or direct Strava API is used. There is no guarantee of zero cost beyond the hosting/storage free-plan quotas.
 
-Before inviting friends, verify the Vercel production deployment, complete real-device screenshot testing and a real two-account signup/invite/scoring test. Production email confirmation and recovery still require SMTP configuration. Direct Strava API integration remains inactive.
+All new evidence starts **pending**. The organiser sees the queue, image files, discrepancies and possible duplicates, then approves or rejects the evidence. Client-side OCR warnings are only review hints. The screenshot file is never by itself proof of a genuine activity, and an organiser must actually inspect the elapsed-time evidence.
+
+**League eligibility:** Creating a new league defaults to an opt-in *Require verified run evidence* rule. When on, the server-side league table counts only approved evidence attached to that exact league. Manual, GPX and FIT entries remain in personal history but do not score in that verified league without evidence. Previously created leagues default to their current rules. RunningScore v1.0 and all current score calculations remain unchanged. Once a league requires verification, the organiser cannot silently disable this requirement. A reviewed activity cannot silently be edited afterward.
+
+**Storage and privacy:** Images are restricted to each runner's folder, and become immutable evidence after submission. Only the uploader and that league's creator can retrieve them. Unsubmitted uploads can be removed; submitted evidence remains attached to the activity during the beta. Deletion requests require an administrator-managed workflow. The free Storage quota should be monitored before adding larger groups. Images can contain location, user names and routes, so only upload screenshots you are comfortable sharing with your league organiser.
+
+### Release checklist — do not merge PR #3 until all gates pass
+
+1. Review and apply supabase/verified-screenshot-leagues.sql to a **non-production** Supabase project first.
+2. Run supabase/tests/verified-evidence-security.sql as a transactional integration test. Validate RLS with two runners, a league creator and a stranger; separately upload and download real image objects.
+3. Apply the reviewed SQL to production. The existing Supabase connection currently does not grant permission to change the live project.
+4. Complete real two-account signup, confirmation and recovery tests. Configure production SMTP before inviting friends.
+5. Verify screenshot upload/review, owner-only signed URLs, pending exclusion, approved and rejected scoring, and at least several real iPhone/Android Strava screenshots.
+6. Merge PR #3 and verify deployment only after the database is ready. No schema migration has been applied to production by this PR.
+
+**Scope limitation:** Evidence is attached to the chosen league. A run does not automatically become verified for other private leagues; it must be reviewed there separately. GPX/FIT files alone do not meet the screenshot-evidence requirement for verified league scoring.
 
 ## Cloud setup
 
