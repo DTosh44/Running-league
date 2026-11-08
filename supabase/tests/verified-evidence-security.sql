@@ -73,7 +73,8 @@ end $$;
 reset role;
 set local role authenticated;
 select set_config('request.jwt.claims','{"sub":"93333333-3333-4333-8333-333333333333","role":"authenticated"}',true);
-do $$ begin
+select public.create_verified_league('Unrelated proof group','Separate organiser',10,3);
+do $ begin
  assert (select count(*) from public.activity_evidence) = 0, 'Proof metadata leaked to a stranger';
  begin
    perform public.league_evidence_queue(current_setting('test.proof_league')::uuid);
